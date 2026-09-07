@@ -14,11 +14,5 @@ response controls.
 - Platform: Windows x64
 - Tested with OBS Studio 32.2.2
 
-Prebuilt downloads are published separately on the repository's Releases page.
-
-## Development disclosure
-
-ExcelVisus was developed with substantial coding assistance from OpenAI Codex.
-Feature direction and hands-on OBS testing were performed by the project owner.
-See the plugin README for testing and architecture details.
+Prebuilt downloads are published separately on the repository's Releases pages.
 
