@@ -29,6 +29,8 @@ struct Point { float x; float y; };
 struct Vertex { Point point; uint32_t color; };
 struct Entrant { std::string id; std::string name; };
 
+enum class ColorStyle { ExcelPalette, Gradient, Rainbow };
+
 struct TextLayer {
   obs_source_t *source = nullptr;
   std::string text;
@@ -54,12 +56,12 @@ struct Settings {
   uint32_t text_color = 0xffffffffU;
   uint32_t background = 0x00000000U;
   float wheel_size = 0.78f;
-  float segment_gap = 1.2f;
+  ColorStyle color_style = ColorStyle::ExcelPalette;
   bool glow = true;
   float glow_strength = 0.7f;
-  bool show_entrant_list = true;
   bool show_status = true;
   bool confetti = true;
+  bool only_when_running = false;
 };
 
 struct SharedState {
@@ -95,7 +97,7 @@ struct FortunaSource {
   TextLayer counter_text;
   TextLayer status_text;
   TextLayer winner_text;
-  TextLayer entrants_text;
+  std::vector<TextLayer> slice_texts;
 };
 
 uint32_t rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255)
@@ -127,6 +129,60 @@ uint32_t mix_color(uint32_t a, uint32_t b, float t)
               mix_byte((a >> 24U) & 0xffU, (b >> 24U) & 0xffU, t));
 }
 
+uint32_t hsv_color(float hue, float saturation, float value)
+{
+  hue -= std::floor(hue);
+  const float scaled = hue * 6.0f;
+  const int sector = static_cast<int>(std::floor(scaled));
+  const float fraction = scaled - std::floor(scaled);
+  const float p = value * (1.0f - saturation);
+  const float q = value * (1.0f - saturation * fraction);
+  const float t = value * (1.0f - saturation * (1.0f - fraction));
+  float red = 0.0f, green = 0.0f, blue = 0.0f;
+  switch (sector % 6) {
+  case 0: red = value; green = t; blue = p; break;
+  case 1: red = q; green = value; blue = p; break;
+  case 2: red = p; green = value; blue = t; break;
+  case 3: red = p; green = q; blue = value; break;
+  case 4: red = t; green = p; blue = value; break;
+  default: red = value; green = p; blue = q; break;
+  }
+  return rgba(static_cast<uint8_t>(red * 255.0f),
+              static_cast<uint8_t>(green * 255.0f),
+              static_cast<uint8_t>(blue * 255.0f));
+}
+
+ColorStyle parse_color_style(const char *value)
+{
+  if (value && std::string(value) == "gradient")
+    return ColorStyle::Gradient;
+  if (value && std::string(value) == "rainbow")
+    return ColorStyle::Rainbow;
+  return ColorStyle::ExcelPalette;
+}
+
+uint32_t segment_color(const Settings &settings, int index, int count)
+{
+  const float position = count <= 1 ? 0.0f :
+      static_cast<float>(index) / static_cast<float>(count - 1);
+  if (settings.color_style == ColorStyle::Gradient)
+    return mix_color(settings.color_a, settings.color_b, position);
+  if (settings.color_style == ColorStyle::Rainbow)
+    return hsv_color(static_cast<float>(index) * 0.61803398875f,
+                     0.72f, 0.96f);
+
+  // A six-step palette built from all three user colors gives adjacent
+  // entrants clear visual separation without discarding customization.
+  switch (index % 6) {
+  case 0: return settings.color_a;
+  case 1: return mix_color(settings.color_a, settings.color_b, 0.48f);
+  case 2: return settings.color_b;
+  case 3: return mix_color(settings.color_b, settings.accent, 0.45f);
+  case 4: return settings.accent;
+  default: return mix_color(settings.accent, settings.color_a, 0.45f);
+  }
+}
+
 void triangle(std::vector<Vertex> &vertices, Point a, Point b, Point c,
               uint32_t color)
 {
@@ -146,6 +202,21 @@ void rectangle(std::vector<Vertex> &vertices, float x0, float y0, float x1,
                float y1, uint32_t color)
 {
   quad(vertices, {x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}, color);
+}
+
+void thick_line(std::vector<Vertex> &vertices, Point start, Point end,
+                float thickness, uint32_t color)
+{
+  const float dx = end.x - start.x;
+  const float dy = end.y - start.y;
+  const float length = std::sqrt(dx * dx + dy * dy);
+  if (length < 0.001f)
+    return;
+  const float nx = -dy / length * thickness * 0.5f;
+  const float ny = dx / length * thickness * 0.5f;
+  quad(vertices, {start.x + nx, start.y + ny},
+       {end.x + nx, end.y + ny}, {end.x - nx, end.y - ny},
+       {start.x - nx, start.y - ny}, color);
 }
 
 void circle(std::vector<Vertex> &vertices, Point center, float radius,
@@ -223,6 +294,28 @@ void render_text(const TextLayer &layer, float x, float y, float max_width,
   gs_matrix_push();
   gs_matrix_translate3f(centered ? x - width * scale * 0.5f : x, y, 0.0f);
   gs_matrix_scale3f(scale, scale, 1.0f);
+  obs_source_video_render(layer.source);
+  gs_matrix_pop();
+}
+
+void render_rotated_text(const TextLayer &layer, float x, float y,
+                         float max_width, float angle)
+{
+  if (!layer.source || layer.text.empty())
+    return;
+  const uint32_t width = obs_source_get_width(layer.source);
+  const uint32_t height = obs_source_get_height(layer.source);
+  if (!width || !height)
+    return;
+  const float scale = max_width > 0.0f && width > max_width
+                          ? max_width / static_cast<float>(width)
+                          : 1.0f;
+  gs_matrix_push();
+  gs_matrix_translate3f(x, y, 0.0f);
+  gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f, angle);
+  gs_matrix_scale3f(scale, scale, 1.0f);
+  gs_matrix_translate3f(-static_cast<float>(width) * 0.5f,
+                        -static_cast<float>(height) * 0.5f, 0.0f);
   obs_source_video_render(layer.source);
   gs_matrix_pop();
 }
@@ -331,7 +424,6 @@ void *source_create(obs_data_t *settings, obs_source_t *context)
   create_text_layer(source->counter_text, "ExcelFortuna Counter");
   create_text_layer(source->status_text, "ExcelFortuna Status");
   create_text_layer(source->winner_text, "ExcelFortuna Winner");
-  create_text_layer(source->entrants_text, "ExcelFortuna Entrants");
   source_update(source, settings);
   return source;
 }
@@ -344,7 +436,8 @@ void source_destroy(void *data)
   destroy_text_layer(source->counter_text);
   destroy_text_layer(source->status_text);
   destroy_text_layer(source->winner_text);
-  destroy_text_layer(source->entrants_text);
+  for (auto &layer : source->slice_texts)
+    destroy_text_layer(layer);
   delete source;
 }
 
@@ -369,12 +462,12 @@ void source_update(void *data, obs_data_t *settings)
   next.text_color = static_cast<uint32_t>(obs_data_get_int(settings, "text_color"));
   next.background = static_cast<uint32_t>(obs_data_get_int(settings, "background"));
   next.wheel_size = static_cast<float>(obs_data_get_double(settings, "wheel_size"));
-  next.segment_gap = static_cast<float>(obs_data_get_double(settings, "segment_gap"));
+  next.color_style = parse_color_style(obs_data_get_string(settings, "color_style"));
   next.glow = obs_data_get_bool(settings, "glow");
   next.glow_strength = static_cast<float>(obs_data_get_double(settings, "glow_strength"));
-  next.show_entrant_list = obs_data_get_bool(settings, "show_entrant_list");
   next.show_status = obs_data_get_bool(settings, "show_status");
   next.confetti = obs_data_get_bool(settings, "confetti");
+  next.only_when_running = obs_data_get_bool(settings, "only_when_running");
 
   const bool reconnect_needed = next.server_url != source->active_server_url ||
                                 next.access_key != source->active_access_key;
@@ -408,12 +501,12 @@ void source_defaults(obs_data_t *settings)
   obs_data_set_default_int(settings, "text_color", rgba(255, 255, 255));
   obs_data_set_default_int(settings, "background", rgba(0, 0, 0, 0));
   obs_data_set_default_double(settings, "wheel_size", 0.78);
-  obs_data_set_default_double(settings, "segment_gap", 1.2);
+  obs_data_set_default_string(settings, "color_style", "excel");
   obs_data_set_default_bool(settings, "glow", true);
   obs_data_set_default_double(settings, "glow_strength", 0.7);
-  obs_data_set_default_bool(settings, "show_entrant_list", true);
   obs_data_set_default_bool(settings, "show_status", true);
   obs_data_set_default_bool(settings, "confetti", true);
+  obs_data_set_default_bool(settings, "only_when_running", false);
 }
 
 bool reconnect_button(obs_properties_t *, obs_property_t *, void *data)
@@ -512,13 +605,18 @@ obs_properties_t *source_properties(void *data)
   obs_properties_add_color_alpha(appearance, "accent", obs_module_text("Appearance.Accent"));
   obs_properties_add_color_alpha(appearance, "text_color", obs_module_text("Appearance.Text"));
   obs_properties_add_color_alpha(appearance, "background", obs_module_text("Appearance.Background"));
+  obs_property_t *color_style = obs_properties_add_list(
+      appearance, "color_style", obs_module_text("Appearance.ColorStyle"),
+      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+  obs_property_list_add_string(color_style, obs_module_text("ColorStyle.Excel"), "excel");
+  obs_property_list_add_string(color_style, obs_module_text("ColorStyle.Gradient"), "gradient");
+  obs_property_list_add_string(color_style, obs_module_text("ColorStyle.Rainbow"), "rainbow");
   obs_properties_add_float_slider(appearance, "wheel_size", obs_module_text("Appearance.WheelSize"), 0.35, 0.95, 0.01);
-  obs_properties_add_float_slider(appearance, "segment_gap", obs_module_text("Appearance.Gap"), 0.0, 8.0, 0.1);
   obs_properties_add_bool(appearance, "glow", obs_module_text("Appearance.Glow"));
   obs_properties_add_float_slider(appearance, "glow_strength", obs_module_text("Appearance.GlowStrength"), 0.0, 1.0, 0.05);
-  obs_properties_add_bool(appearance, "show_entrant_list", obs_module_text("Appearance.Entrants"));
   obs_properties_add_bool(appearance, "show_status", obs_module_text("Appearance.Status"));
   obs_properties_add_bool(appearance, "confetti", obs_module_text("Appearance.Confetti"));
+  obs_properties_add_bool(appearance, "only_when_running", obs_module_text("Appearance.OnlyRunning"));
   obs_properties_add_group(properties, "appearance_group", obs_module_text("Group.Appearance"), OBS_GROUP_NORMAL, appearance);
 
   obs_properties_t *testing = obs_properties_create();
@@ -599,11 +697,24 @@ void source_tick(void *data, float seconds)
               winner.empty() ? "" : "WINNER\n" + winner,
               46, source->settings.accent);
 
-  std::ostringstream list;
-  const std::size_t first = entrants.size() > 12 ? entrants.size() - 12 : 0;
-  for (std::size_t i = first; i < entrants.size(); ++i)
-    list << (i + 1) << ". " << entrants[i].name << (i + 1 < entrants.size() ? "\n" : "");
-  update_text(source->entrants_text, list.str(), 21, source->settings.text_color);
+  const std::size_t label_count = std::min<std::size_t>(entrants.size(), 128);
+  while (source->slice_texts.size() < label_count) {
+    TextLayer layer;
+    const std::string name = "ExcelFortuna Slice " +
+                             std::to_string(source->slice_texts.size());
+    create_text_layer(layer, name.c_str());
+    source->slice_texts.push_back(std::move(layer));
+  }
+  while (source->slice_texts.size() > label_count) {
+    destroy_text_layer(source->slice_texts.back());
+    source->slice_texts.pop_back();
+  }
+  const int slice_font_size = entrants.size() <= 12 ? 23 :
+                              entrants.size() <= 24 ? 17 :
+                              entrants.size() <= 48 ? 13 : 10;
+  for (std::size_t i = 0; i < label_count; ++i)
+    update_text(source->slice_texts[i], entrants[i].name, slice_font_size,
+                source->settings.text_color);
 }
 
 void render_confetti(std::vector<Vertex> &vertices, const FortunaSource &source)
@@ -633,13 +744,18 @@ void source_render(void *data, gs_effect_t *)
   auto *source = static_cast<FortunaSource *>(data);
   std::vector<Entrant> entrants;
   std::string phase;
-  std::string winner;
   {
     std::lock_guard<std::mutex> lock(source->state.mutex);
     entrants = source->state.entrants;
     phase = source->state.phase;
-    winner = source->state.winner_name;
   }
+
+  const bool winner_visible =
+      ((!source->spin.active() && source->spin.finished()) || phase == "winner") &&
+      source->winner_elapsed <= 10.0f;
+  if (source->settings.only_when_running && phase != "open" &&
+      phase != "spinning" && !winner_visible)
+    return;
 
   std::vector<Vertex> vertices;
   vertices.reserve(5000);
@@ -648,8 +764,7 @@ void source_render(void *data, gs_effect_t *)
   if ((source->settings.background >> 24U) != 0)
     rectangle(vertices, 0.0f, 0.0f, width, height, source->settings.background);
 
-  const bool has_list = source->settings.show_entrant_list && width >= 800.0f;
-  const float wheel_region = has_list ? width * 0.68f : width;
+  const float wheel_region = width;
   const Point center{wheel_region * 0.5f, height * 0.53f};
   const float radius = std::min(wheel_region * 0.43f, height * 0.37f) *
                        source->settings.wheel_size / 0.78f;
@@ -663,26 +778,37 @@ void source_render(void *data, gs_effect_t *)
     }
   }
 
-  const int segments = std::max(2, static_cast<int>(entrants.empty() ? 12 : entrants.size()));
+  const int segments = std::max(1, static_cast<int>(entrants.empty() ? 12 : entrants.size()));
   const float segment_angle = 2.0f * kPi / static_cast<float>(segments);
-  const float gap = std::min(segment_angle * 0.35f,
-      source->settings.segment_gap * kPi / 180.0f);
+  const float inner_radius = radius * 0.21f;
+  const uint32_t outline = rgba(8, 8, 12, 255);
+  circle(vertices, center, radius + 2.2f, outline, 96);
   for (int i = 0; i < segments; ++i) {
-    const float color_position = segments <= 1 ? 0.0f :
-        static_cast<float>(i % 10) / 9.0f;
-    const auto color = mix_color(source->settings.color_a,
-                                 source->settings.color_b, color_position);
-    const float start = source->wheel_angle + i * segment_angle + gap * 0.5f;
-    const float end = source->wheel_angle + (i + 1) * segment_angle - gap * 0.5f;
-    wheel_segment(vertices, center, radius * 0.21f, radius, start, end, color);
+    const auto color = segment_color(source->settings, i, segments);
+    const float start = source->wheel_angle + i * segment_angle;
+    const float end = source->wheel_angle + (i + 1) * segment_angle;
+    wheel_segment(vertices, center, inner_radius, radius, start, end, color);
   }
-  circle(vertices, center, radius * 0.205f, with_alpha(source->settings.accent, 0.96f), 48);
+  for (int i = 0; i < segments; ++i) {
+    const float angle = source->wheel_angle + i * segment_angle;
+    thick_line(vertices,
+               {center.x + std::cos(angle) * inner_radius,
+                center.y + std::sin(angle) * inner_radius},
+               {center.x + std::cos(angle) * radius,
+                center.y + std::sin(angle) * radius},
+               2.0f, outline);
+  }
+  circle(vertices, center, inner_radius + 2.0f, outline, 64);
+  circle(vertices, center, radius * 0.195f, with_alpha(source->settings.accent, 0.96f), 48);
   circle(vertices, center, radius * 0.10f, rgba(20, 18, 36, 255), 40);
 
   const float pointer_y = center.y - radius - 12.0f;
-  triangle(vertices, {center.x - 19.0f, pointer_y - 28.0f},
-           {center.x + 19.0f, pointer_y - 28.0f},
-           {center.x, pointer_y + 18.0f}, source->settings.accent);
+  triangle(vertices, {center.x - 22.0f, pointer_y - 31.0f},
+           {center.x + 22.0f, pointer_y - 31.0f},
+           {center.x, pointer_y + 21.0f}, outline);
+  triangle(vertices, {center.x - 18.0f, pointer_y - 27.0f},
+           {center.x + 18.0f, pointer_y - 27.0f},
+           {center.x, pointer_y + 15.0f}, source->settings.accent);
   render_confetti(vertices, *source);
 
   if (!vertices.empty()) {
@@ -704,11 +830,20 @@ void source_render(void *data, gs_effect_t *)
   if (source->settings.show_status)
     render_text(source->status_text, 14.0f, height - 26.0f,
                 width * 0.75f, false);
-  if (has_list) {
-    render_text(source->entrants_text, wheel_region + 18.0f, 92.0f,
-                width - wheel_region - 32.0f, false);
+  const std::size_t visible_labels = std::min(entrants.size(), source->slice_texts.size());
+  for (std::size_t i = 0; i < visible_labels; ++i) {
+    const float middle = source->wheel_angle +
+                         (static_cast<float>(i) + 0.5f) * segment_angle;
+    float text_angle = middle;
+    if (std::cos(middle) < 0.0f)
+      text_angle += kPi;
+    const float label_radius = radius * 0.60f;
+    render_rotated_text(source->slice_texts[i],
+                        center.x + std::cos(middle) * label_radius,
+                        center.y + std::sin(middle) * label_radius,
+                        radius * 0.62f, text_angle);
   }
-  if ((!source->spin.active() && source->spin.finished()) || phase == "winner") {
+  if (winner_visible) {
     render_text(source->winner_text, wheel_region * 0.5f,
                 center.y - 55.0f, wheel_region * 0.64f, true);
   }

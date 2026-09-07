@@ -17,8 +17,10 @@ module on the server; OBS only animates the result.
   in the admin history as excluded entries
 - Manual spin, entry-count auto-spin, or countdown auto-spin
 - Server-authoritative winner selection and synchronized Twitch chat message
-- Adjustable wheel colors, accent, background, slice spacing, size, glow,
-  rotation count, spin duration, name list, status text, and confetti
+- Entrant names drawn directly on seamless, black-outlined wheel slices
+- Excel three-color, two-color gradient, and vibrant rainbow palettes
+- Adjustable wheel colors, accent, background, size, glow, rotation count,
+  spin duration, status text, confetti, and running-only visibility
 - Offline demo entrant and demo spin buttons for safe scene design
 - Multiple OBS sources can watch the same giveaway
 
@@ -53,6 +55,8 @@ module on the server; OBS only animates the result.
 
 Use a low-cost temporary reward and a non-production OBS scene for the first
 live test. **Cancel current giveaway** closes a test without choosing a winner.
+The offline **Spin using demo entrants** button never sends a Twitch chat
+message; chat announcements happen only for server-run giveaways.
 
 ## Build
 
