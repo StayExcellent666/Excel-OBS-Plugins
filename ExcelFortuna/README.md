@@ -1,8 +1,9 @@
 # ExcelFortuna for OBS
 
-ExcelFortuna is a native Windows OBS source for Twitch Channel Points
-giveaways powered by ExcelProtocol. It renders the entrant counter, animated
-wheel, winner reveal, neon glow, recent names, and confetti directly through
+ExcelFortuna is a native Windows OBS source for Twitch giveaways powered by
+ExcelProtocol. Viewers can enter through a Channel Points reward or a
+configurable chat command such as `!enter`. It renders the entrant counter,
+animated wheel, winner reveal, neon glow, names, and confetti directly through
 OBS rather than a browser source.
 
 ExcelProtocol keeps Twitch credentials and giveaway authority on the server.
@@ -12,15 +13,16 @@ module on the server; OBS only animates the result.
 
 ## Features
 
-- Exact Channel Points reward-title matching
+- Channel Points reward-title or Twitch chat-command entry modes
 - One eligible entry per Twitch account; duplicate redemptions remain visible
   in the admin history as excluded entries
 - Manual spin, entry-count auto-spin, or countdown auto-spin
 - Server-authoritative winner selection and synchronized Twitch chat message
-- Entrant names drawn directly on seamless, black-outlined wheel slices
+- Entrant names drawn directly on seamless, smoothly rendered wheel slices
+- Optional polished 3D bevel, rim, highlights, and cast shadow
 - Excel three-color, two-color gradient, and vibrant rainbow palettes
 - Adjustable wheel colors, accent, background, size, glow, rotation count,
-  spin duration, status text, confetti, and running-only visibility
+  spin duration, 3D depth, status text, confetti, and running-only visibility
 - Offline demo entrant and demo spin buttons for safe scene design
 - Multiple OBS sources can watch the same giveaway
 
@@ -44,11 +46,13 @@ module on the server; OBS only animates the result.
 
 ## Run a giveaway
 
-1. Set the exact title of the Twitch Channel Points reward viewers will redeem.
+1. Select **Channel Points reward** or **Twitch chat command** as the entry
+   method. Set the matching reward title or a command such as `!enter`.
 2. Choose an optional entry target and/or countdown. Zero disables that auto
    finish condition.
 3. Click **Start accepting entries**.
-4. Viewers redeem the reward; unique names and the counter update live.
+4. Viewers redeem the reward or type the command; unique names and the counter
+   update live. Each Twitch account receives one eligible entry.
 5. Click **Close entries and spin now**, or let an auto-spin condition fire.
 6. ExcelProtocol selects the winner, ExcelFortuna lands on them, and the bot
    names them in Twitch chat after the wheel finishes.

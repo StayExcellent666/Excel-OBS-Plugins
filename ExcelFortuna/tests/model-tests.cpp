@@ -31,11 +31,16 @@ int main()
   expect(spin.winner_index == 3, "winner index");
   expect(spin.spin_duration_ms == 6000, "spin duration");
 
-  const auto command = make_start_command("Big \"Giveaway\"", "Giveaway Entry", 25, 300, 8000);
+  const auto command = make_start_command("Big \"Giveaway\"", "Giveaway Entry",
+                                          "chat_command", "!join", 25, 300, 8000);
   expect(command.find("Big \\\"Giveaway\\\"") != std::string::npos,
          "command JSON escaping");
   expect(command.find("\"target_entries\":25") != std::string::npos,
          "command target");
+  expect(command.find("\"entry_mode\":\"chat_command\"") != std::string::npos,
+         "command entry mode");
+  expect(command.find("\"chat_command\":\"!join\"") != std::string::npos,
+         "command chat entry command");
 
   SpinAnimation animation;
   animation.start(0.0f, 2, 8, 4.0f, 5);

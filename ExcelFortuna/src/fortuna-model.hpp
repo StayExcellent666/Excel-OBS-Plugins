@@ -40,6 +40,8 @@ ProtocolEvent parse_protocol_event(const std::string &json);
 std::string json_escape(const std::string &value);
 std::string make_start_command(const std::string &title,
                                const std::string &reward_title,
+                               const std::string &entry_mode,
+                               const std::string &chat_command,
                                int target_entries, int duration_seconds,
                                int spin_duration_ms);
 std::string make_simple_command(const char *type);

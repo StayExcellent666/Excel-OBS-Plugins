@@ -127,12 +127,16 @@ std::string json_escape(const std::string &value)
 
 std::string make_start_command(const std::string &title,
                                const std::string &reward_title,
+                               const std::string &entry_mode,
+                               const std::string &chat_command,
                                int target_entries, int duration_seconds,
                                int spin_duration_ms)
 {
   std::ostringstream json;
   json << "{\"type\":\"start\",\"title\":\"" << json_escape(title)
        << "\",\"reward_title\":\"" << json_escape(reward_title)
+       << "\",\"entry_mode\":\"" << json_escape(entry_mode)
+       << "\",\"chat_command\":\"" << json_escape(chat_command)
        << "\",\"target_entries\":" << std::max(0, target_entries)
        << ",\"duration_seconds\":" << std::max(0, duration_seconds)
        << ",\"spin_duration_ms\":"

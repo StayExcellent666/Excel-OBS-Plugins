@@ -46,6 +46,8 @@ struct Settings {
   bool auto_connect = true;
   std::string title = "Fortuna Giveaway";
   std::string reward_title = "Giveaway Entry";
+  std::string entry_mode = "channel_reward";
+  std::string chat_command = "!enter";
   int target_entries = 0;
   int duration_seconds = 300;
   int spin_duration_ms = 8000;
@@ -59,6 +61,8 @@ struct Settings {
   ColorStyle color_style = ColorStyle::ExcelPalette;
   bool glow = true;
   float glow_strength = 0.7f;
+  bool depth = true;
+  float depth_strength = 0.72f;
   bool show_status = true;
   bool confetti = true;
   bool only_when_running = false;
@@ -129,6 +133,18 @@ uint32_t mix_color(uint32_t a, uint32_t b, float t)
               mix_byte((a >> 24U) & 0xffU, (b >> 24U) & 0xffU, t));
 }
 
+uint32_t shade_color(uint32_t color, float brightness)
+{
+  brightness = std::max(0.0f, brightness);
+  const auto scale = [brightness](uint8_t value) {
+    return static_cast<uint8_t>(std::clamp(
+        std::lround(static_cast<float>(value) * brightness), 0L, 255L));
+  };
+  return rgba(scale(color & 0xffU), scale((color >> 8U) & 0xffU),
+              scale((color >> 16U) & 0xffU),
+              static_cast<uint8_t>((color >> 24U) & 0xffU));
+}
+
 uint32_t hsv_color(float hue, float saturation, float value)
 {
   hue -= std::floor(hue);
@@ -191,6 +207,26 @@ void triangle(std::vector<Vertex> &vertices, Point a, Point b, Point c,
   vertices.push_back({c, color});
 }
 
+void triangle_gradient(std::vector<Vertex> &vertices,
+                       Point a, uint32_t color_a,
+                       Point b, uint32_t color_b,
+                       Point c, uint32_t color_c)
+{
+  vertices.push_back({a, color_a});
+  vertices.push_back({b, color_b});
+  vertices.push_back({c, color_c});
+}
+
+void quad_gradient(std::vector<Vertex> &vertices,
+                   Point a, uint32_t color_a,
+                   Point b, uint32_t color_b,
+                   Point c, uint32_t color_c,
+                   Point d, uint32_t color_d)
+{
+  triangle_gradient(vertices, a, color_a, b, color_b, c, color_c);
+  triangle_gradient(vertices, a, color_a, c, color_c, d, color_d);
+}
+
 void quad(std::vector<Vertex> &vertices, Point a, Point b, Point c, Point d,
           uint32_t color)
 {
@@ -234,9 +270,13 @@ void circle(std::vector<Vertex> &vertices, Point center, float radius,
 }
 
 void wheel_segment(std::vector<Vertex> &vertices, Point center, float inner,
-                   float outer, float start, float end, uint32_t color)
+                   float outer, float start, float end,
+                   uint32_t inner_color, uint32_t outer_color)
 {
-  constexpr int subdivisions = 8;
+  // Keep the full circumference at roughly 256 edges regardless of entrant
+  // count. The old fixed eight edges per slice made small wheels look faceted.
+  const int subdivisions = std::max(2, static_cast<int>(std::ceil(
+      std::abs(end - start) / (2.0f * kPi) * 256.0f)));
   for (int i = 0; i < subdivisions; ++i) {
     const float a0 = start + (end - start) * static_cast<float>(i) / subdivisions;
     const float a1 = start + (end - start) * static_cast<float>(i + 1) / subdivisions;
@@ -248,7 +288,8 @@ void wheel_segment(std::vector<Vertex> &vertices, Point center, float inner,
                    center.y + std::sin(a1) * outer};
     const Point i1{center.x + std::cos(a1) * inner,
                    center.y + std::sin(a1) * inner};
-    quad(vertices, i0, o0, o1, i1, color);
+    quad_gradient(vertices, i0, inner_color, o0, outer_color,
+                  o1, outer_color, i1, inner_color);
   }
 }
 
@@ -452,6 +493,8 @@ void source_update(void *data, obs_data_t *settings)
   next.auto_connect = obs_data_get_bool(settings, "auto_connect");
   next.title = obs_data_get_string(settings, "giveaway_title");
   next.reward_title = obs_data_get_string(settings, "reward_title");
+  next.entry_mode = obs_data_get_string(settings, "entry_mode");
+  next.chat_command = obs_data_get_string(settings, "chat_command");
   next.target_entries = static_cast<int>(obs_data_get_int(settings, "target_entries"));
   next.duration_seconds = static_cast<int>(obs_data_get_int(settings, "duration_seconds"));
   next.spin_duration_ms = static_cast<int>(obs_data_get_int(settings, "spin_duration_ms"));
@@ -465,6 +508,8 @@ void source_update(void *data, obs_data_t *settings)
   next.color_style = parse_color_style(obs_data_get_string(settings, "color_style"));
   next.glow = obs_data_get_bool(settings, "glow");
   next.glow_strength = static_cast<float>(obs_data_get_double(settings, "glow_strength"));
+  next.depth = obs_data_get_bool(settings, "depth");
+  next.depth_strength = static_cast<float>(obs_data_get_double(settings, "depth_strength"));
   next.show_status = obs_data_get_bool(settings, "show_status");
   next.confetti = obs_data_get_bool(settings, "confetti");
   next.only_when_running = obs_data_get_bool(settings, "only_when_running");
@@ -491,6 +536,8 @@ void source_defaults(obs_data_t *settings)
   obs_data_set_default_bool(settings, "auto_connect", true);
   obs_data_set_default_string(settings, "giveaway_title", "Fortuna Giveaway");
   obs_data_set_default_string(settings, "reward_title", "Giveaway Entry");
+  obs_data_set_default_string(settings, "entry_mode", "channel_reward");
+  obs_data_set_default_string(settings, "chat_command", "!enter");
   obs_data_set_default_int(settings, "target_entries", 0);
   obs_data_set_default_int(settings, "duration_seconds", 300);
   obs_data_set_default_int(settings, "spin_duration_ms", 8000);
@@ -504,6 +551,8 @@ void source_defaults(obs_data_t *settings)
   obs_data_set_default_string(settings, "color_style", "excel");
   obs_data_set_default_bool(settings, "glow", true);
   obs_data_set_default_double(settings, "glow_strength", 0.7);
+  obs_data_set_default_bool(settings, "depth", true);
+  obs_data_set_default_double(settings, "depth_strength", 0.72);
   obs_data_set_default_bool(settings, "show_status", true);
   obs_data_set_default_bool(settings, "confetti", true);
   obs_data_set_default_bool(settings, "only_when_running", false);
@@ -520,6 +569,7 @@ bool start_button(obs_properties_t *, obs_property_t *, void *data)
   auto *source = static_cast<FortunaSource *>(data);
   source->network->send(excel_fortuna::make_start_command(
       source->settings.title, source->settings.reward_title,
+      source->settings.entry_mode, source->settings.chat_command,
       source->settings.target_entries, source->settings.duration_seconds,
       source->settings.spin_duration_ms));
   return false;
@@ -600,7 +650,13 @@ obs_properties_t *source_properties(void *data)
 
   obs_properties_t *giveaway = obs_properties_create();
   obs_properties_add_text(giveaway, "giveaway_title", obs_module_text("Giveaway.Title"), OBS_TEXT_DEFAULT);
+  obs_property_t *entry_mode = obs_properties_add_list(
+      giveaway, "entry_mode", obs_module_text("Giveaway.EntryMode"),
+      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+  obs_property_list_add_string(entry_mode, obs_module_text("EntryMode.Reward"), "channel_reward");
+  obs_property_list_add_string(entry_mode, obs_module_text("EntryMode.Chat"), "chat_command");
   obs_properties_add_text(giveaway, "reward_title", obs_module_text("Giveaway.Reward"), OBS_TEXT_DEFAULT);
+  obs_properties_add_text(giveaway, "chat_command", obs_module_text("Giveaway.ChatCommand"), OBS_TEXT_DEFAULT);
   obs_properties_add_int(giveaway, "target_entries", obs_module_text("Giveaway.Target"), 0, 100000, 1);
   obs_properties_add_int(giveaway, "duration_seconds", obs_module_text("Giveaway.Duration"), 0, 86400, 5);
   obs_properties_add_int_slider(giveaway, "spin_duration_ms", obs_module_text("Giveaway.SpinDuration"), 2000, 30000, 250);
@@ -627,6 +683,8 @@ obs_properties_t *source_properties(void *data)
   obs_properties_add_float_slider(appearance, "wheel_size", obs_module_text("Appearance.WheelSize"), 0.35, 0.95, 0.01);
   obs_properties_add_bool(appearance, "glow", obs_module_text("Appearance.Glow"));
   obs_properties_add_float_slider(appearance, "glow_strength", obs_module_text("Appearance.GlowStrength"), 0.0, 1.0, 0.05);
+  obs_properties_add_bool(appearance, "depth", obs_module_text("Appearance.Depth"));
+  obs_properties_add_float_slider(appearance, "depth_strength", obs_module_text("Appearance.DepthStrength"), 0.0, 1.0, 0.05);
   obs_properties_add_bool(appearance, "show_status", obs_module_text("Appearance.Status"));
   obs_properties_add_bool(appearance, "confetti", obs_module_text("Appearance.Confetti"));
   obs_properties_add_bool(appearance, "only_when_running", obs_module_text("Appearance.OnlyRunning"));
@@ -771,7 +829,7 @@ void source_render(void *data, gs_effect_t *)
     return;
 
   std::vector<Vertex> vertices;
-  vertices.reserve(5000);
+  vertices.reserve(20000);
   const float width = static_cast<float>(source->settings.width);
   const float height = static_cast<float>(source->settings.height);
   if ((source->settings.background >> 24U) != 0)
@@ -782,12 +840,22 @@ void source_render(void *data, gs_effect_t *)
   const float radius = std::min(wheel_region * 0.43f, height * 0.37f) *
                        source->settings.wheel_size / 0.78f;
 
+  const float depth = source->settings.depth
+                          ? 5.0f + source->settings.depth_strength * 13.0f
+                          : 0.0f;
+  if (source->settings.depth) {
+    // Soft cast shadow and a lowered dark wheel body create real separation
+    // from the scene without requiring an expensive custom shader.
+    circle(vertices, {center.x + depth * 0.30f, center.y + depth * 0.72f},
+           radius + 10.0f, rgba(0, 0, 0, 82), 192);
+  }
+
   if (source->settings.glow) {
     for (int layer = 5; layer >= 1; --layer) {
       const float alpha = source->settings.glow_strength *
                           static_cast<float>(6 - layer) * 0.025f;
       circle(vertices, center, radius + layer * 8.0f,
-             with_alpha(source->settings.color_b, alpha), 72);
+             with_alpha(source->settings.color_b, alpha), 192);
     }
   }
 
@@ -795,12 +863,36 @@ void source_render(void *data, gs_effect_t *)
   const float segment_angle = 2.0f * kPi / static_cast<float>(segments);
   const float inner_radius = radius * 0.21f;
   const uint32_t outline = rgba(8, 8, 12, 255);
-  circle(vertices, center, radius + 2.2f, outline, 96);
+  if (source->settings.depth) {
+    circle(vertices, {center.x, center.y + depth}, radius + 5.5f,
+           shade_color(source->settings.color_b,
+                       0.20f + source->settings.depth_strength * 0.18f),
+           192);
+  }
+  circle(vertices, center, radius + 6.0f, outline, 192);
+  circle(vertices, center, radius + 3.2f,
+         shade_color(source->settings.accent,
+                     source->settings.depth ? 0.72f : 0.52f), 192);
+  circle(vertices, center, radius + 0.8f, outline, 192);
   for (int i = 0; i < segments; ++i) {
     const auto color = segment_color(source->settings, i, segments);
     const float start = source->wheel_angle + i * segment_angle;
     const float end = source->wheel_angle + (i + 1) * segment_angle;
-    wheel_segment(vertices, center, inner_radius, radius, start, end, color);
+    if (source->settings.depth) {
+      const float crown_radius = radius * 0.72f;
+      const float strength = source->settings.depth_strength;
+      const uint32_t inner = shade_color(color, 0.66f + 0.15f * (1.0f - strength));
+      const uint32_t crown = mix_color(color, rgba(255, 255, 255, 255),
+                                       0.08f + 0.12f * strength);
+      const uint32_t outer = shade_color(color, 0.72f + 0.14f * (1.0f - strength));
+      wheel_segment(vertices, center, inner_radius, crown_radius,
+                    start, end, inner, crown);
+      wheel_segment(vertices, center, crown_radius, radius,
+                    start, end, crown, outer);
+    } else {
+      wheel_segment(vertices, center, inner_radius, radius,
+                    start, end, color, color);
+    }
   }
   for (int i = 0; i < segments; ++i) {
     const float angle = source->wheel_angle + i * segment_angle;
@@ -809,19 +901,42 @@ void source_render(void *data, gs_effect_t *)
                 center.y + std::sin(angle) * inner_radius},
                {center.x + std::cos(angle) * radius,
                 center.y + std::sin(angle) * radius},
-               2.0f, outline);
+               1.35f, with_alpha(outline, 0.92f));
   }
-  circle(vertices, center, inner_radius + 2.0f, outline, 64);
-  circle(vertices, center, radius * 0.195f, with_alpha(source->settings.accent, 0.96f), 48);
-  circle(vertices, center, radius * 0.10f, rgba(20, 18, 36, 255), 40);
+  if (source->settings.depth) {
+    // A restrained upper rim highlight reads as polished material while the
+    // radial slice gradients give every wedge a curved, beveled surface.
+    wheel_segment(vertices, center, radius * 0.82f, radius * 0.965f,
+                  -kPi, 0.0f, rgba(255, 255, 255, 0),
+                  rgba(255, 255, 255,
+                       static_cast<uint8_t>(18 + source->settings.depth_strength * 28)));
+  }
+  circle(vertices, center, inner_radius + 3.5f, outline, 128);
+  if (source->settings.depth)
+    circle(vertices, {center.x, center.y + depth * 0.28f}, radius * 0.205f,
+           shade_color(source->settings.accent, 0.42f), 128);
+  circle(vertices, center, radius * 0.195f,
+         with_alpha(source->settings.accent, 0.98f), 128);
+  if (source->settings.depth)
+    circle(vertices, {center.x - radius * 0.027f, center.y - radius * 0.030f},
+           radius * 0.145f, rgba(255, 255, 255, 28), 96);
+  circle(vertices, center, radius * 0.10f, rgba(20, 18, 36, 255), 96);
 
   const float pointer_y = center.y - radius - 12.0f;
   triangle(vertices, {center.x - 22.0f, pointer_y - 31.0f},
            {center.x + 22.0f, pointer_y - 31.0f},
            {center.x, pointer_y + 21.0f}, outline);
+  if (source->settings.depth)
+    triangle(vertices, {center.x - 18.0f, pointer_y - 22.0f},
+             {center.x + 18.0f, pointer_y - 22.0f},
+             {center.x, pointer_y + 20.0f},
+             shade_color(source->settings.accent, 0.42f));
   triangle(vertices, {center.x - 18.0f, pointer_y - 27.0f},
            {center.x + 18.0f, pointer_y - 27.0f},
-           {center.x, pointer_y + 15.0f}, source->settings.accent);
+           {center.x, pointer_y + 15.0f},
+           source->settings.depth
+               ? mix_color(source->settings.accent, rgba(255, 255, 255, 255), 0.12f)
+               : source->settings.accent);
   render_confetti(vertices, *source);
 
   if (!vertices.empty()) {
