@@ -1,6 +1,6 @@
-# Spectrum Canvas for OBS
+# ExcelVisus for OBS
 
-Spectrum Canvas is a native OBS source plugin for flexible, real-time audio
+ExcelVisus is a native OBS source plugin for flexible, real-time audio
 visualization. It listens to any audio-producing OBS source and draws directly
 through the OBS graphics API, so there is no browser-source latency or external
 web service.
@@ -18,8 +18,9 @@ The mirrored style can mirror top/bottom, left/right, or both. For horizontal
 mirroring, bass can sit in the center or on the two outside edges. Bars can use
 flat or rounded outer caps, including radial bars. Standard and radial bar
 styles can also render adjustable layered neon glow halos.
-Very short or silent bars automatically use flat tips and suppress their halo,
-preventing detached glow dots around the baseline.
+Rounded bars keep a small baseline-attached cap even during silence. When glow
+is enabled, a tightly clamped idle halo stays attached to that cap instead of
+forming detached glow dots around the baseline.
 
 Every style shares the same analysis and color engine. You can change canvas
 size, frequency range, band count, FFT resolution, logarithmic/linear spacing,
@@ -32,6 +33,23 @@ primary style to create hybrid designs rather than relying only on presets.
 
 Six one-click starting presets are included: Clean Rounded Bars, Neon Wings,
 Bass Outside, Rainbow Orbit, Green Oscilloscope, and Sunset Dots.
+
+## Compatibility
+
+- Windows x64
+- Tested with OBS Studio 32.2.2
+
+## Install a release build
+
+1. Close OBS Studio completely.
+2. Download the latest Windows x64 ZIP from the GitHub Releases page.
+3. Extract the ZIP and copy its `obs-plugins` and `data` folders into your OBS
+   Studio installation folder.
+4. Reopen OBS and add **ExcelVisus Visualizer** from the Sources panel.
+
+The current release package uses OBS's legacy installation layout for custom or
+portable OBS installations. A per-user/ProgramData installer is planned for a
+future release.
 
 ## Understanding the analysis controls
 
@@ -83,7 +101,7 @@ ctest --test-dir build-tests -C Release --output-on-failure
 
 ## Use in OBS
 
-1. Add **Spectrum Canvas** from the Sources panel.
+1. Add **ExcelVisus Visualizer** from the Sources panel.
 2. Choose the microphone, application audio, media source, or other audio source
    to visualize.
 3. Select a visualization style and tune the grouped settings.
@@ -98,6 +116,14 @@ The OBS audio callback only downmixes samples into a fixed-size ring buffer.
 FFT, smoothing, waveform extraction, and geometry generation run on the video
 thread. This keeps expensive work away from OBS's real-time audio path. The DSP
 component has no OBS dependency and is covered by a standalone sine-wave test.
+
+## Development disclosure
+
+ExcelVisus was developed with substantial coding assistance from OpenAI Codex.
+Feature direction and hands-on testing in OBS were performed by the project
+owner. Releases are also checked with standalone DSP tests and an OBS module
+initialization/source-registration smoke test. Bugs can be reported through the
+repository's Issues page.
 
 ## License
 

@@ -1,0 +1,14 @@
+/build*/
+/dist/
+**/build*/
+**/dist/
+!**/build-compat/
+!**/build-compat/**
+.vs/
+*.user
+*.suo
+*.VC.db
+*.dll
+*.exe
+*.a
+*.zip
