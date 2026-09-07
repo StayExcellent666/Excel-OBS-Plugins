@@ -560,6 +560,19 @@ bool demo_entry_button(obs_properties_t *, obs_property_t *, void *data)
 bool demo_spin_button(obs_properties_t *, obs_property_t *, void *data)
 {
   auto *source = static_cast<FortunaSource *>(data);
+  bool connected = false;
+  {
+    std::lock_guard<std::mutex> lock(source->state.mutex);
+    connected = source->state.connected;
+  }
+  if (connected) {
+    std::ostringstream command;
+    command << "{\"type\":\"test_spin\",\"spin_duration_ms\":"
+            << source->settings.spin_duration_ms << "}";
+    source->network->send(command.str());
+    return false;
+  }
+
   std::lock_guard<std::mutex> lock(source->state.mutex);
   if (source->state.entrants.empty())
     return false;

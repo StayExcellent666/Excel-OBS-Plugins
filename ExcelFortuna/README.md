@@ -53,10 +53,15 @@ module on the server; OBS only animates the result.
 6. ExcelProtocol selects the winner, ExcelFortuna lands on them, and the bot
    names them in Twitch chat after the wheel finishes.
 
-Use a low-cost temporary reward and a non-production OBS scene for the first
-live test. **Cancel current giveaway** closes a test without choosing a winner.
-The offline **Spin using demo entrants** button never sends a Twitch chat
-message; chat announcements happen only for server-run giveaways.
+You can run a realistic test even if the channel does not have Channel Points.
+While connected, **Run test spin** asks ExcelProtocol to send mock entrants,
+select a winner server-side, drive the wheel, and post a clearly labeled test
+result in the linked Twitch chat. It does not create giveaway history and no
+prize is awarded. When disconnected, the same button is a local visual preview
+using entrants added with **Add demo entrant**, so it cannot post to chat.
+
+Use a non-production OBS scene for the first live test. **Cancel current
+giveaway** closes a real test without choosing a winner.
 
 ## Build
 
