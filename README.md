@@ -24,6 +24,7 @@ selection, animated wheel reveal, Twitch chat announcement, neon styling,
 confetti, and safe offline preview controls.
 
 - [Source, setup, security notes, and build instructions](ExcelFortuna/README.md)
+- [Download the latest ExcelFortuna release](https://github.com/StayExcellent666/Excel-OBS-Plugins/releases?q=ExcelFortuna)
 - Platform: Windows x64
 - Tested with OBS Studio 32.2.2
 

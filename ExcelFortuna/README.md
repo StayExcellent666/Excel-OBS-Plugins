@@ -37,20 +37,23 @@ module on the server; OBS only animates the result.
 ## Install on Windows
 
 1. Close OBS completely.
-2. Copy `obs-plugins/64bit/obs-excelfortuna.dll` into the matching folder in
-   the OBS installation.
-3. Copy `data/obs-plugins/obs-excelfortuna` into the matching OBS data folder.
+2. Download the ExcelFortuna Windows zip from the repository's
+   [Releases page](https://github.com/StayExcellent666/Excel-OBS-Plugins/releases).
+3. Extract the zip directly into the OBS installation folder so its
+   `obs-plugins` and `data` folders merge with the matching OBS folders.
 4. Reopen OBS and add **ExcelFortuna Giveaway Wheel** from Sources.
 
 ## Connect ExcelProtocol
 
-1. Open the private **Fortuna** dashboard tab as an ExcelProtocol owner/admin.
-2. Under **ExcelFortuna OBS Connection**, enter the Twitch channel login and
-   generate a key.
+1. Open **Fortuna** for the Discord server in the ExcelProtocol dashboard. You
+   must be the server owner, an administrator, or have Manage Server permission.
+2. Connect that server's Twitch broadcaster account if it is not already
+   linked, then generate a key under **Settings & OBS Connection**.
 3. Copy the key immediately; only its SHA-256 hash is stored by the server.
 4. Paste it into **Plugin key** in the OBS source properties and click
    **Connect / reconnect now**.
-5. The source status should change to `Connected to @channel`.
+5. The source status should change to `Connected to @channel`, and the Fortuna
+   dashboard pairing badge should turn green and show at least one source online.
 
 ## Run a giveaway
 
