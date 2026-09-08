@@ -28,6 +28,9 @@ module on the server; OBS only animates the result.
 - Offline demo entrant and demo spin buttons for safe scene design
 - Multiple OBS sources can watch the same giveaway
 - Winner announcements wait for OBS to report the actual final animation frame
+- Automatic chat-entry confirmations include the current eligible entrant total
+- Full-screen staged reveal: hidden early, timer-only warning, dramatic final
+  ten seconds, then the wheel appears and spins at zero
 
 ## Install on Windows
 
@@ -59,6 +62,12 @@ module on the server; OBS only animates the result.
 5. Click **Close entries and spin now**, or let an auto-spin condition fire.
 6. ExcelProtocol selects the winner, ExcelFortuna lands on them, and the bot
    names them in Twitch chat after the wheel finishes.
+
+With **Hide until final countdown, spin, and winner** enabled, a long giveaway
+stays completely hidden at first. By default, the final five minutes show only
+the remaining time and eligible entrant count. The last ten seconds switch to
+large full-screen numbers. At zero ExcelProtocol closes entries and the wheel
+appears for the synchronized spin. Both reveal thresholds are configurable.
 
 You can run a realistic test even if the channel does not have Channel Points.
 While connected, **Run test spin** asks ExcelProtocol to send mock entrants,

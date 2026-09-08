@@ -48,6 +48,22 @@ int main()
   expect(completion.find("\"winner_id\":\"viewer-99\"") != std::string::npos,
          "spin completion winner id");
 
+  expect(choose_display_mode(true, "open", 3600, 300, 10, false) ==
+             DisplayMode::Hidden,
+         "long giveaway stays hidden");
+  expect(choose_display_mode(true, "open", 300, 300, 10, false) ==
+             DisplayMode::Countdown,
+         "five minute timer appears without wheel");
+  expect(choose_display_mode(true, "open", 10, 300, 10, false) ==
+             DisplayMode::DramaticCountdown,
+         "last ten seconds are dramatic");
+  expect(choose_display_mode(true, "spinning", 0, 300, 10, false) ==
+             DisplayMode::Wheel,
+         "wheel appears at spin");
+  expect(choose_display_mode(true, "winner", 0, 300, 10, true) ==
+             DisplayMode::Wheel,
+         "winner remains visible");
+
   SpinAnimation animation;
   animation.start(0.0f, 2, 8, 4.0f, 5);
   expect(animation.active(), "animation starts");

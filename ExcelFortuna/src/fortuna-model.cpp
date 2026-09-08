@@ -159,6 +159,28 @@ std::string make_spin_complete_command(std::int64_t giveaway_id,
   return json.str();
 }
 
+DisplayMode choose_display_mode(bool hide_until_countdown,
+                                const std::string &phase,
+                                int remaining_seconds,
+                                int countdown_reveal_seconds,
+                                int dramatic_countdown_seconds,
+                                bool winner_visible)
+{
+  if (!hide_until_countdown)
+    return DisplayMode::Wheel;
+  if (phase == "spinning" || winner_visible)
+    return DisplayMode::Wheel;
+  const bool in_countdown = phase == "open" && remaining_seconds > 0 &&
+      countdown_reveal_seconds > 0 &&
+      remaining_seconds <= countdown_reveal_seconds;
+  if (!in_countdown)
+    return DisplayMode::Hidden;
+  if (dramatic_countdown_seconds > 0 &&
+      remaining_seconds <= dramatic_countdown_seconds)
+    return DisplayMode::DramaticCountdown;
+  return DisplayMode::Countdown;
+}
+
 void SpinAnimation::start(float current_angle, int winner_index,
                           int entry_count, float duration_seconds,
                           int rotations)

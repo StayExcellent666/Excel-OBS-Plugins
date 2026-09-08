@@ -17,6 +17,7 @@
 
 namespace {
 using excel_fortuna::ConnectionConfig;
+using excel_fortuna::DisplayMode;
 using excel_fortuna::EventType;
 using excel_fortuna::FortunaNetwork;
 using excel_fortuna::ProtocolEvent;
@@ -51,6 +52,8 @@ struct Settings {
   std::string chat_command = "!enter";
   int target_entries = 0;
   int duration_seconds = 300;
+  int countdown_reveal_seconds = 300;
+  int dramatic_countdown_seconds = 10;
   int spin_duration_ms = 8000;
   int rotations = 7;
   uint32_t color_a = 0xffffc33dU;
@@ -104,6 +107,9 @@ struct FortunaSource {
   TextLayer title_text;
   TextLayer counter_text;
   TextLayer status_text;
+  TextLayer countdown_label_text;
+  TextLayer countdown_time_text;
+  TextLayer countdown_entries_text;
   TextLayer winner_kicker_text;
   TextLayer winner_text;
   TextLayer winner_message_text;
@@ -152,6 +158,25 @@ uint32_t shade_color(uint32_t color, float brightness)
   return rgba(scale(color & 0xffU), scale((color >> 8U) & 0xffU),
               scale((color >> 16U) & 0xffU),
               static_cast<uint8_t>((color >> 24U) & 0xffU));
+}
+
+std::string countdown_clock(int total_seconds)
+{
+  total_seconds = std::max(0, total_seconds);
+  const int hours = total_seconds / 3600;
+  const int minutes = (total_seconds % 3600) / 60;
+  const int seconds = total_seconds % 60;
+  std::ostringstream text;
+  if (hours > 0) {
+    text << hours << ':';
+    if (minutes < 10) text << '0';
+    text << minutes << ':';
+  } else {
+    text << minutes << ':';
+  }
+  if (seconds < 10) text << '0';
+  text << seconds;
+  return text.str();
 }
 
 uint32_t hsv_color(float hue, float saturation, float value)
@@ -492,6 +517,9 @@ void *source_create(obs_data_t *settings, obs_source_t *context)
   create_text_layer(source->title_text, "ExcelFortuna Title");
   create_text_layer(source->counter_text, "ExcelFortuna Counter");
   create_text_layer(source->status_text, "ExcelFortuna Status");
+  create_text_layer(source->countdown_label_text, "ExcelFortuna Countdown Label");
+  create_text_layer(source->countdown_time_text, "ExcelFortuna Countdown Time");
+  create_text_layer(source->countdown_entries_text, "ExcelFortuna Countdown Entrants");
   create_text_layer(source->winner_kicker_text, "ExcelFortuna Winner Kicker");
   create_text_layer(source->winner_text, "ExcelFortuna Winner");
   create_text_layer(source->winner_message_text, "ExcelFortuna Winner Message");
@@ -506,6 +534,9 @@ void source_destroy(void *data)
   destroy_text_layer(source->title_text);
   destroy_text_layer(source->counter_text);
   destroy_text_layer(source->status_text);
+  destroy_text_layer(source->countdown_label_text);
+  destroy_text_layer(source->countdown_time_text);
+  destroy_text_layer(source->countdown_entries_text);
   destroy_text_layer(source->winner_kicker_text);
   destroy_text_layer(source->winner_text);
   destroy_text_layer(source->winner_message_text);
@@ -529,6 +560,10 @@ void source_update(void *data, obs_data_t *settings)
   next.chat_command = obs_data_get_string(settings, "chat_command");
   next.target_entries = static_cast<int>(obs_data_get_int(settings, "target_entries"));
   next.duration_seconds = static_cast<int>(obs_data_get_int(settings, "duration_seconds"));
+  next.countdown_reveal_seconds = static_cast<int>(
+      obs_data_get_int(settings, "countdown_reveal_seconds"));
+  next.dramatic_countdown_seconds = static_cast<int>(
+      obs_data_get_int(settings, "dramatic_countdown_seconds"));
   next.spin_duration_ms = static_cast<int>(obs_data_get_int(settings, "spin_duration_ms"));
   next.rotations = static_cast<int>(obs_data_get_int(settings, "rotations"));
   next.color_a = static_cast<uint32_t>(obs_data_get_int(settings, "color_a"));
@@ -573,6 +608,8 @@ void source_defaults(obs_data_t *settings)
   obs_data_set_default_string(settings, "chat_command", "!enter");
   obs_data_set_default_int(settings, "target_entries", 0);
   obs_data_set_default_int(settings, "duration_seconds", 300);
+  obs_data_set_default_int(settings, "countdown_reveal_seconds", 300);
+  obs_data_set_default_int(settings, "dramatic_countdown_seconds", 10);
   obs_data_set_default_int(settings, "spin_duration_ms", 8000);
   obs_data_set_default_int(settings, "rotations", 7);
   obs_data_set_default_int(settings, "color_a", rgba(61, 195, 255));
@@ -694,6 +731,8 @@ obs_properties_t *source_properties(void *data)
   obs_properties_add_text(giveaway, "chat_command", obs_module_text("Giveaway.ChatCommand"), OBS_TEXT_DEFAULT);
   obs_properties_add_int(giveaway, "target_entries", obs_module_text("Giveaway.Target"), 0, 100000, 1);
   obs_properties_add_int(giveaway, "duration_seconds", obs_module_text("Giveaway.Duration"), 0, 86400, 5);
+  obs_properties_add_int(giveaway, "countdown_reveal_seconds", obs_module_text("Giveaway.CountdownReveal"), 0, 3600, 5);
+  obs_properties_add_int(giveaway, "dramatic_countdown_seconds", obs_module_text("Giveaway.DramaticCountdown"), 0, 60, 1);
   obs_properties_add_int_slider(giveaway, "spin_duration_ms", obs_module_text("Giveaway.SpinDuration"), 2000, 30000, 250);
   obs_properties_add_int_slider(giveaway, "rotations", obs_module_text("Giveaway.Rotations"), 1, 20, 1);
   obs_properties_add_button(giveaway, "start", obs_module_text("Giveaway.Start"), start_button);
@@ -827,6 +866,26 @@ void source_tick(void *data, float seconds)
               28, source->settings.accent);
   update_text(source->status_text, status, source->settings.font_face, 18,
               phase == "open" ? rgba(67, 255, 173) : source->settings.text_color);
+  const bool dramatic_countdown = phase == "open" && remaining > 0 &&
+      remaining <= source->settings.dramatic_countdown_seconds;
+  update_text(source->countdown_label_text,
+              phase == "open" && remaining > 0 ? "GIVEAWAY DRAW IN" : "",
+              source->settings.font_face, dramatic_countdown ? 38 : 30,
+              source->settings.text_color);
+  update_text(source->countdown_time_text,
+              phase == "open" && remaining > 0
+                  ? (dramatic_countdown ? std::to_string(remaining)
+                                        : countdown_clock(remaining))
+                  : "",
+              source->settings.font_face, dramatic_countdown ? 260 : 112,
+              source->settings.accent);
+  std::ostringstream countdown_entries;
+  countdown_entries << entry_count
+                    << (entry_count == 1 ? " ENTRANT" : " ENTRANTS");
+  update_text(source->countdown_entries_text,
+              phase == "open" && remaining > 0 ? countdown_entries.str() : "",
+              source->settings.font_face, dramatic_countdown ? 34 : 30,
+              source->settings.text_color);
   update_text(source->winner_kicker_text,
               winner.empty() ? "" : "FORTUNA HAS CHOSEN",
               source->settings.font_face, 23, source->settings.text_color);
@@ -884,18 +943,27 @@ void source_render(void *data, gs_effect_t *)
   auto *source = static_cast<FortunaSource *>(data);
   std::vector<Entrant> entrants;
   std::string phase;
+  int remaining = 0;
+  int entry_count = 0;
   {
     std::lock_guard<std::mutex> lock(source->state.mutex);
     entrants = source->state.entrants;
     phase = source->state.phase;
+    remaining = source->state.remaining_seconds;
+    entry_count = source->state.entry_count;
   }
 
   const bool winner_visible =
       ((!source->spin.active() && source->spin.finished()) || phase == "winner") &&
       source->winner_elapsed <= 10.0f;
-  if (source->settings.only_when_running && phase != "open" &&
-      phase != "spinning" && !winner_visible)
+  const DisplayMode display_mode = excel_fortuna::choose_display_mode(
+      source->settings.only_when_running, phase, remaining,
+      source->settings.countdown_reveal_seconds,
+      source->settings.dramatic_countdown_seconds, winner_visible);
+  if (display_mode == DisplayMode::Hidden)
     return;
+  const bool countdown_visible = display_mode == DisplayMode::Countdown ||
+      display_mode == DisplayMode::DramaticCountdown;
 
   std::vector<Vertex> vertices;
   vertices.reserve(20000);
@@ -903,6 +971,65 @@ void source_render(void *data, gs_effect_t *)
   const float height = static_cast<float>(source->settings.height);
   if ((source->settings.background >> 24U) != 0)
     rectangle(vertices, 0.0f, 0.0f, width, height, source->settings.background);
+
+  if (countdown_visible) {
+    const bool dramatic = display_mode == DisplayMode::DramaticCountdown;
+    if (dramatic) {
+      rectangle(vertices, 0.0f, 0.0f, width, height, rgba(7, 8, 18, 198));
+      const Point countdown_center{width * 0.5f, height * 0.51f};
+      const float ring_radius = std::min(width, height) * 0.31f;
+      if (source->settings.glow) {
+        for (int layer = 4; layer >= 1; --layer) {
+          wheel_segment(vertices, countdown_center,
+                        ring_radius + layer * 8.0f,
+                        ring_radius + layer * 12.0f,
+                        0.0f, 2.0f * kPi,
+                        with_alpha(source->settings.color_b, 0.0f),
+                        with_alpha(source->settings.color_b,
+                                   source->settings.glow_strength * 0.10f));
+        }
+      }
+      wheel_segment(vertices, countdown_center, ring_radius - 4.0f,
+                    ring_radius + 4.0f, 0.0f, 2.0f * kPi,
+                    shade_color(source->settings.accent, 0.50f),
+                    source->settings.accent);
+    } else {
+      const float panel_x0 = width * 0.23f;
+      const float panel_x1 = width * 0.77f;
+      const float panel_y0 = height * 0.18f;
+      const float panel_y1 = height * 0.79f;
+      rounded_rectangle(vertices, panel_x0 + 10.0f, panel_y0 + 12.0f,
+                        panel_x1 + 10.0f, panel_y1 + 12.0f, 34.0f,
+                        rgba(0, 0, 0, 94));
+      rounded_rectangle(vertices, panel_x0, panel_y0, panel_x1, panel_y1,
+                        34.0f, with_alpha(source->settings.color_b, 0.82f));
+      rounded_rectangle(vertices, panel_x0 + 3.0f, panel_y0 + 3.0f,
+                        panel_x1 - 3.0f, panel_y1 - 3.0f, 31.0f,
+                        rgba(17, 18, 31, 238));
+      rounded_rectangle(vertices, width * 0.495f, panel_y0 + 26.0f,
+                        width * 0.505f, panel_y0 + 78.0f, 6.0f,
+                        source->settings.accent);
+    }
+
+    if (!vertices.empty()) {
+      gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_SOLID);
+      while (gs_effect_loop(effect, "SolidColored")) {
+        gs_render_start(true);
+        for (const auto &vertex : vertices) {
+          gs_color(vertex.color);
+          gs_vertex2f(vertex.point.x, vertex.point.y);
+        }
+        gs_render_stop(GS_TRIS);
+      }
+    }
+    render_text(source->countdown_label_text, width * 0.5f,
+                height * (dramatic ? 0.12f : 0.28f), width * 0.72f, true);
+    render_text(source->countdown_time_text, width * 0.5f,
+                height * (dramatic ? 0.29f : 0.39f), width * 0.72f, true);
+    render_text(source->countdown_entries_text, width * 0.5f,
+                height * (dramatic ? 0.77f : 0.66f), width * 0.72f, true);
+    return;
+  }
 
   const bool side_panel = width >= height * 1.38f;
   const float wheel_region = side_panel ? width * 0.67f : width;

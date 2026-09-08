@@ -18,6 +18,13 @@ enum class EventType {
   Pong,
 };
 
+enum class DisplayMode {
+  Hidden,
+  Wheel,
+  Countdown,
+  DramaticCountdown,
+};
+
 struct ProtocolEvent {
   EventType type = EventType::Unknown;
   std::string status;
@@ -47,6 +54,12 @@ std::string make_start_command(const std::string &title,
 std::string make_simple_command(const char *type);
 std::string make_spin_complete_command(std::int64_t giveaway_id,
                                        const std::string &winner_id);
+DisplayMode choose_display_mode(bool hide_until_countdown,
+                                const std::string &phase,
+                                int remaining_seconds,
+                                int countdown_reveal_seconds,
+                                int dramatic_countdown_seconds,
+                                bool winner_visible);
 
 class SpinAnimation {
 public:
