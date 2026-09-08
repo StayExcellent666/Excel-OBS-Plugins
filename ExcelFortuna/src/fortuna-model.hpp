@@ -45,6 +45,8 @@ std::string make_start_command(const std::string &title,
                                int target_entries, int duration_seconds,
                                int spin_duration_ms);
 std::string make_simple_command(const char *type);
+std::string make_spin_complete_command(std::int64_t giveaway_id,
+                                       const std::string &winner_id);
 
 class SpinAnimation {
 public:

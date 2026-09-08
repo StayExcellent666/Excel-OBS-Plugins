@@ -42,6 +42,12 @@ int main()
   expect(command.find("\"chat_command\":\"!join\"") != std::string::npos,
          "command chat entry command");
 
+  const auto completion = make_spin_complete_command(42, "viewer-99");
+  expect(completion.find("\"giveaway_id\":42") != std::string::npos,
+         "spin completion giveaway id");
+  expect(completion.find("\"winner_id\":\"viewer-99\"") != std::string::npos,
+         "spin completion winner id");
+
   SpinAnimation animation;
   animation.start(0.0f, 2, 8, 4.0f, 5);
   expect(animation.active(), "animation starts");

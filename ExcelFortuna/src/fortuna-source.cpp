@@ -34,6 +34,7 @@ enum class ColorStyle { ExcelPalette, Gradient, Rainbow };
 struct TextLayer {
   obs_source_t *source = nullptr;
   std::string text;
+  std::string face;
   int size = 32;
   uint32_t color = 0xffffffffU;
 };
@@ -57,6 +58,7 @@ struct Settings {
   uint32_t accent = 0xfff5f5ffU;
   uint32_t text_color = 0xffffffffU;
   uint32_t background = 0x00000000U;
+  std::string font_face = "Segoe UI";
   float wheel_size = 0.78f;
   ColorStyle color_style = ColorStyle::ExcelPalette;
   bool glow = true;
@@ -81,8 +83,10 @@ struct SharedState {
   std::string winner_id;
   std::string winner_name;
   int pending_winner_index = -1;
+  std::int64_t pending_giveaway_id = 0;
   int pending_spin_ms = 8000;
   bool pending_spin = false;
+  bool pending_remote_spin = false;
   bool reset_requested = false;
 };
 
@@ -100,8 +104,13 @@ struct FortunaSource {
   TextLayer title_text;
   TextLayer counter_text;
   TextLayer status_text;
+  TextLayer winner_kicker_text;
   TextLayer winner_text;
+  TextLayer winner_message_text;
   std::vector<TextLayer> slice_texts;
+  std::int64_t active_giveaway_id = 0;
+  std::string active_winner_id;
+  bool spin_completion_sent = true;
 };
 
 uint32_t rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255)
@@ -240,6 +249,22 @@ void rectangle(std::vector<Vertex> &vertices, float x0, float y0, float x1,
   quad(vertices, {x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}, color);
 }
 
+void circle(std::vector<Vertex> &vertices, Point center, float radius,
+            uint32_t color, int segments);
+
+void rounded_rectangle(std::vector<Vertex> &vertices, float x0, float y0,
+                       float x1, float y1, float radius, uint32_t color)
+{
+  radius = std::clamp(radius, 0.0f,
+                      std::min((x1 - x0) * 0.5f, (y1 - y0) * 0.5f));
+  rectangle(vertices, x0 + radius, y0, x1 - radius, y1, color);
+  rectangle(vertices, x0, y0 + radius, x1, y1 - radius, color);
+  circle(vertices, {x0 + radius, y0 + radius}, radius, color, 32);
+  circle(vertices, {x1 - radius, y0 + radius}, radius, color, 32);
+  circle(vertices, {x0 + radius, y1 - radius}, radius, color, 32);
+  circle(vertices, {x1 - radius, y1 - radius}, radius, color, 32);
+}
+
 void thick_line(std::vector<Vertex> &vertices, Point start, Point end,
                 float thickness, uint32_t color)
 {
@@ -293,19 +318,20 @@ void wheel_segment(std::vector<Vertex> &vertices, Point center, float inner,
   }
 }
 
-void update_text(TextLayer &layer, const std::string &text, int size,
-                 uint32_t color)
+void update_text(TextLayer &layer, const std::string &text,
+                 const std::string &face, int size, uint32_t color)
 {
   if (!layer.source || (layer.text == text && layer.size == size &&
-                        layer.color == color))
+                        layer.color == color && layer.face == face))
     return;
   layer.text = text;
+  layer.face = face;
   layer.size = size;
   layer.color = color;
   obs_data_t *settings = obs_data_create();
   obs_data_t *font = obs_data_create();
   obs_data_set_string(settings, "text", text.c_str());
-  obs_data_set_string(font, "face", "Arial");
+  obs_data_set_string(font, "face", face.empty() ? "Segoe UI" : face.c_str());
   obs_data_set_string(font, "style", "Bold");
   obs_data_set_int(font, "size", size);
   obs_data_set_obj(settings, "font", font);
@@ -410,8 +436,10 @@ void handle_event(FortunaSource *source, const ProtocolEvent &event)
     state.winner_id = event.winner_id;
     state.winner_name = event.winner_display_name;
     state.pending_winner_index = event.winner_index;
+    state.pending_giveaway_id = event.giveaway_id;
     state.pending_spin_ms = event.spin_duration_ms;
     state.pending_spin = true;
+    state.pending_remote_spin = true;
     break;
   case EventType::Winner:
     state.phase = "winner";
@@ -464,7 +492,9 @@ void *source_create(obs_data_t *settings, obs_source_t *context)
   create_text_layer(source->title_text, "ExcelFortuna Title");
   create_text_layer(source->counter_text, "ExcelFortuna Counter");
   create_text_layer(source->status_text, "ExcelFortuna Status");
+  create_text_layer(source->winner_kicker_text, "ExcelFortuna Winner Kicker");
   create_text_layer(source->winner_text, "ExcelFortuna Winner");
+  create_text_layer(source->winner_message_text, "ExcelFortuna Winner Message");
   source_update(source, settings);
   return source;
 }
@@ -476,7 +506,9 @@ void source_destroy(void *data)
   destroy_text_layer(source->title_text);
   destroy_text_layer(source->counter_text);
   destroy_text_layer(source->status_text);
+  destroy_text_layer(source->winner_kicker_text);
   destroy_text_layer(source->winner_text);
+  destroy_text_layer(source->winner_message_text);
   for (auto &layer : source->slice_texts)
     destroy_text_layer(layer);
   delete source;
@@ -504,6 +536,7 @@ void source_update(void *data, obs_data_t *settings)
   next.accent = static_cast<uint32_t>(obs_data_get_int(settings, "accent"));
   next.text_color = static_cast<uint32_t>(obs_data_get_int(settings, "text_color"));
   next.background = static_cast<uint32_t>(obs_data_get_int(settings, "background"));
+  next.font_face = obs_data_get_string(settings, "font_face");
   next.wheel_size = static_cast<float>(obs_data_get_double(settings, "wheel_size"));
   next.color_style = parse_color_style(obs_data_get_string(settings, "color_style"));
   next.glow = obs_data_get_bool(settings, "glow");
@@ -547,6 +580,7 @@ void source_defaults(obs_data_t *settings)
   obs_data_set_default_int(settings, "accent", rgba(255, 235, 92));
   obs_data_set_default_int(settings, "text_color", rgba(255, 255, 255));
   obs_data_set_default_int(settings, "background", rgba(0, 0, 0, 0));
+  obs_data_set_default_string(settings, "font_face", "Segoe UI");
   obs_data_set_default_double(settings, "wheel_size", 0.78);
   obs_data_set_default_string(settings, "color_style", "excel");
   obs_data_set_default_bool(settings, "glow", true);
@@ -634,6 +668,7 @@ bool demo_spin_button(obs_properties_t *, obs_property_t *, void *data)
   source->state.pending_winner_index = index;
   source->state.pending_spin_ms = source->settings.spin_duration_ms;
   source->state.pending_spin = true;
+  source->state.pending_remote_spin = false;
   source->state.phase = "spinning";
   return false;
 }
@@ -674,6 +709,13 @@ obs_properties_t *source_properties(void *data)
   obs_properties_add_color_alpha(appearance, "accent", obs_module_text("Appearance.Accent"));
   obs_properties_add_color_alpha(appearance, "text_color", obs_module_text("Appearance.Text"));
   obs_properties_add_color_alpha(appearance, "background", obs_module_text("Appearance.Background"));
+  obs_property_t *font_face = obs_properties_add_list(
+      appearance, "font_face", obs_module_text("Appearance.Font"),
+      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+  obs_property_list_add_string(font_face, "Segoe UI", "Segoe UI");
+  obs_property_list_add_string(font_face, "Bahnschrift SemiBold", "Bahnschrift SemiBold");
+  obs_property_list_add_string(font_face, "Aptos Display", "Aptos Display");
+  obs_property_list_add_string(font_face, "Trebuchet MS", "Trebuchet MS");
   obs_property_t *color_style = obs_properties_add_list(
       appearance, "color_style", obs_module_text("Appearance.ColorStyle"),
       OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -720,8 +762,10 @@ void source_tick(void *data, float seconds)
   int target = 0;
   int remaining = 0;
   int spin_index = -1;
+  std::int64_t spin_giveaway_id = 0;
   int spin_ms = 8000;
   bool begin_spin = false;
+  bool remote_spin = false;
   {
     std::lock_guard<std::mutex> lock(source->state.mutex);
     auto &state = source->state;
@@ -729,6 +773,7 @@ void source_tick(void *data, float seconds)
     phase = state.phase;
     status = state.connection_status;
     winner = state.winner_name;
+    const std::string winner_id = state.winner_id;
     entrants = state.entrants;
     entry_count = state.entry_count;
     target = state.target_entries;
@@ -736,37 +781,60 @@ void source_tick(void *data, float seconds)
     if (state.pending_spin) {
       begin_spin = true;
       spin_index = state.pending_winner_index;
+      spin_giveaway_id = state.pending_giveaway_id;
       spin_ms = state.pending_spin_ms;
+      remote_spin = state.pending_remote_spin;
       state.pending_spin = false;
+      state.pending_remote_spin = false;
+      source->active_winner_id = winner_id;
     }
   }
 
   if (begin_spin) {
+    const auto selected = std::find_if(
+        entrants.begin(), entrants.end(), [source](const Entrant &entrant) {
+          return entrant.id == source->active_winner_id;
+        });
+    if (selected != entrants.end())
+      spin_index = static_cast<int>(std::distance(entrants.begin(), selected));
     source->spin.start(source->wheel_angle, spin_index,
                        static_cast<int>(entrants.size()), spin_ms / 1000.0f,
                        source->settings.rotations);
+    source->active_giveaway_id = spin_giveaway_id;
+    source->spin_completion_sent = !remote_spin;
     source->winner_elapsed = 0.0f;
   }
   if (source->spin.active()) {
     source->spin.tick(std::clamp(seconds, 0.0f, 0.25f));
     source->wheel_angle = source->spin.angle();
+    if (source->spin.finished() && !source->spin_completion_sent) {
+      source->network->send(excel_fortuna::make_spin_complete_command(
+          source->active_giveaway_id, source->active_winner_id));
+      source->spin_completion_sent = true;
+    }
   } else if (phase == "winner" || source->spin.finished()) {
     source->winner_elapsed += std::max(0.0f, seconds);
   }
 
   update_text(source->title_text, title.empty() ? source->settings.title : title,
-              42, source->settings.text_color);
+              source->settings.font_face, 42, source->settings.text_color);
   std::ostringstream counter;
   counter << entry_count;
   if (target > 0) counter << " / " << target;
   counter << (entry_count == 1 ? " ENTRY" : " ENTRIES");
   if (remaining > 0) counter << "  |  " << remaining << "s";
-  update_text(source->counter_text, counter.str(), 28, source->settings.accent);
-  update_text(source->status_text, status, 18,
+  update_text(source->counter_text, counter.str(), source->settings.font_face,
+              28, source->settings.accent);
+  update_text(source->status_text, status, source->settings.font_face, 18,
               phase == "open" ? rgba(67, 255, 173) : source->settings.text_color);
-  update_text(source->winner_text,
-              winner.empty() ? "" : "WINNER\n" + winner,
-              46, source->settings.accent);
+  update_text(source->winner_kicker_text,
+              winner.empty() ? "" : "FORTUNA HAS CHOSEN",
+              source->settings.font_face, 23, source->settings.text_color);
+  update_text(source->winner_text, winner, source->settings.font_face,
+              52, source->settings.accent);
+  update_text(source->winner_message_text,
+              winner.empty() ? "" : "CONGRATULATIONS!",
+              source->settings.font_face, 21, source->settings.text_color);
 
   const std::size_t label_count = std::min<std::size_t>(entrants.size(), 128);
   while (source->slice_texts.size() < label_count) {
@@ -784,7 +852,8 @@ void source_tick(void *data, float seconds)
                               entrants.size() <= 24 ? 17 :
                               entrants.size() <= 48 ? 13 : 10;
   for (std::size_t i = 0; i < label_count; ++i)
-    update_text(source->slice_texts[i], entrants[i].name, slice_font_size,
+    update_text(source->slice_texts[i], entrants[i].name,
+                source->settings.font_face, slice_font_size,
                 source->settings.text_color);
 }
 
@@ -835,7 +904,8 @@ void source_render(void *data, gs_effect_t *)
   if ((source->settings.background >> 24U) != 0)
     rectangle(vertices, 0.0f, 0.0f, width, height, source->settings.background);
 
-  const float wheel_region = width;
+  const bool side_panel = width >= height * 1.38f;
+  const float wheel_region = side_panel ? width * 0.67f : width;
   const Point center{wheel_region * 0.5f, height * 0.53f};
   const float radius = std::min(wheel_region * 0.43f, height * 0.37f) *
                        source->settings.wheel_size / 0.78f;
@@ -912,14 +982,17 @@ void source_render(void *data, gs_effect_t *)
                        static_cast<uint8_t>(18 + source->settings.depth_strength * 28)));
   }
   circle(vertices, center, inner_radius + 3.5f, outline, 128);
-  if (source->settings.depth)
-    circle(vertices, {center.x, center.y + depth * 0.28f}, radius * 0.205f,
-           shade_color(source->settings.accent, 0.42f), 128);
+  circle(vertices, center, radius * 0.208f,
+         source->settings.depth
+             ? shade_color(source->settings.accent, 0.42f)
+             : outline,
+         128);
   circle(vertices, center, radius * 0.195f,
          with_alpha(source->settings.accent, 0.98f), 128);
   if (source->settings.depth)
-    circle(vertices, {center.x - radius * 0.027f, center.y - radius * 0.030f},
-           radius * 0.145f, rgba(255, 255, 255, 28), 96);
+    wheel_segment(vertices, center, radius * 0.145f, radius * 0.185f,
+                  -kPi, 0.0f, rgba(255, 255, 255, 4),
+                  rgba(255, 255, 255, 52));
   circle(vertices, center, radius * 0.10f, rgba(20, 18, 36, 255), 96);
 
   const float pointer_y = center.y - radius - 12.0f;
@@ -937,6 +1010,30 @@ void source_render(void *data, gs_effect_t *)
            source->settings.depth
                ? mix_color(source->settings.accent, rgba(255, 255, 255, 255), 0.12f)
                : source->settings.accent);
+
+  if (winner_visible && side_panel) {
+    const float panel_x0 = width * 0.685f;
+    const float panel_x1 = width * 0.965f;
+    const float panel_y0 = center.y - radius * 0.47f;
+    const float panel_y1 = center.y + radius * 0.47f;
+    rounded_rectangle(vertices, panel_x0 + 9.0f, panel_y0 + 11.0f,
+                      panel_x1 + 9.0f, panel_y1 + 11.0f, 24.0f,
+                      rgba(0, 0, 0, 92));
+    rounded_rectangle(vertices, panel_x0, panel_y0, panel_x1, panel_y1,
+                      24.0f, with_alpha(source->settings.accent, 0.92f));
+    rounded_rectangle(vertices, panel_x0 + 3.0f, panel_y0 + 3.0f,
+                      panel_x1 - 3.0f, panel_y1 - 3.0f, 21.0f,
+                      rgba(17, 18, 31, 238));
+    rounded_rectangle(vertices, panel_x0 + 15.0f, panel_y0 + 19.0f,
+                      panel_x0 + 21.0f, panel_y1 - 19.0f, 3.0f,
+                      source->settings.accent);
+    circle(vertices, {(panel_x0 + panel_x1) * 0.5f, panel_y0 + 49.0f},
+           18.0f, shade_color(source->settings.accent, 0.46f), 64);
+    circle(vertices, {(panel_x0 + panel_x1) * 0.5f, panel_y0 + 45.0f},
+           15.0f, source->settings.accent, 64);
+    circle(vertices, {(panel_x0 + panel_x1) * 0.5f, panel_y0 + 45.0f},
+           6.0f, rgba(17, 18, 31, 255), 48);
+  }
   render_confetti(vertices, *source);
 
   if (!vertices.empty()) {
@@ -972,8 +1069,23 @@ void source_render(void *data, gs_effect_t *)
                         radius * 0.62f, text_angle);
   }
   if (winner_visible) {
-    render_text(source->winner_text, wheel_region * 0.5f,
-                center.y - 55.0f, wheel_region * 0.64f, true);
+    if (side_panel) {
+      const float panel_center = width * 0.825f;
+      const float panel_width = width * 0.235f;
+      render_text(source->winner_kicker_text, panel_center,
+                  center.y - radius * 0.19f, panel_width, true);
+      render_text(source->winner_text, panel_center,
+                  center.y - 18.0f, panel_width, true);
+      render_text(source->winner_message_text, panel_center,
+                  center.y + radius * 0.20f, panel_width, true);
+    } else {
+      render_text(source->winner_kicker_text, wheel_region * 0.5f,
+                  center.y - 78.0f, wheel_region * 0.62f, true);
+      render_text(source->winner_text, wheel_region * 0.5f,
+                  center.y - 35.0f, wheel_region * 0.62f, true);
+      render_text(source->winner_message_text, wheel_region * 0.5f,
+                  center.y + 38.0f, wheel_region * 0.62f, true);
+    }
   }
 }
 } // namespace

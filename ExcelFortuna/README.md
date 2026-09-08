@@ -20,11 +20,14 @@ module on the server; OBS only animates the result.
 - Server-authoritative winner selection and synchronized Twitch chat message
 - Entrant names drawn directly on seamless, smoothly rendered wheel slices
 - Optional polished 3D bevel, rim, highlights, and cast shadow
+- Centered concentric hub and a right-side winner announcement card
+- Segoe UI, Bahnschrift, Aptos Display, and Trebuchet font choices
 - Excel three-color, two-color gradient, and vibrant rainbow palettes
 - Adjustable wheel colors, accent, background, size, glow, rotation count,
   spin duration, 3D depth, status text, confetti, and running-only visibility
 - Offline demo entrant and demo spin buttons for safe scene design
 - Multiple OBS sources can watch the same giveaway
+- Winner announcements wait for OBS to report the actual final animation frame
 
 ## Install on Windows
 

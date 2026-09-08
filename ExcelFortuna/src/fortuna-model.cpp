@@ -149,6 +149,16 @@ std::string make_simple_command(const char *type)
   return std::string("{\"type\":\"") + json_escape(type ? type : "") + "\"}";
 }
 
+std::string make_spin_complete_command(std::int64_t giveaway_id,
+                                       const std::string &winner_id)
+{
+  std::ostringstream json;
+  json << "{\"type\":\"spin_complete\",\"giveaway_id\":"
+       << giveaway_id << ",\"winner_id\":\"" << json_escape(winner_id)
+       << "\"}";
+  return json.str();
+}
+
 void SpinAnimation::start(float current_angle, int winner_index,
                           int entry_count, float duration_seconds,
                           int rotations)

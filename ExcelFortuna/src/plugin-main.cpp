@@ -18,6 +18,6 @@ MODULE_EXPORT const char *obs_module_description(void)
 bool obs_module_load(void)
 {
   register_fortuna_source();
-  blog(LOG_INFO, "[ExcelFortuna] loaded version 0.3.0");
+  blog(LOG_INFO, "[ExcelFortuna] loaded version 0.3.1");
   return true;
 }
