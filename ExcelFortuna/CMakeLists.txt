@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(excelfortuna VERSION 0.4.0 LANGUAGES CXX)
+project(excelfortuna VERSION 0.5.0 LANGUAGES CXX)
 
 option(EXCELFORTUNA_BUILD_PLUGIN "Build the OBS plugin" ON)
 option(EXCELFORTUNA_BUILD_TESTS "Build standalone model tests" ON)

@@ -31,6 +31,8 @@ module on the server; OBS only animates the result.
 - Automatic chat-entry confirmations include the current eligible entrant total
 - Full-screen staged reveal: hidden early, timer-only warning, dramatic final
   ten seconds, then the wheel appears and spins at zero
+- Compact six-position final-minutes timer and centered, unclipped dramatic
+  countdown typography
 
 ## Install on Windows
 
@@ -67,7 +69,8 @@ With **Hide until final countdown, spin, and winner** enabled, a long giveaway
 stays completely hidden at first. By default, the final five minutes show only
 the remaining time and eligible entrant count. The last ten seconds switch to
 large full-screen numbers. At zero ExcelProtocol closes entries and the wheel
-appears for the synchronized spin. Both reveal thresholds are configurable.
+appears for the synchronized spin. Both reveal thresholds are configurable,
+and the compact timer can be anchored to any top or bottom corner/center.
 
 You can run a realistic test even if the channel does not have Channel Points.
 While connected, **Run test spin** asks ExcelProtocol to send mock entrants,

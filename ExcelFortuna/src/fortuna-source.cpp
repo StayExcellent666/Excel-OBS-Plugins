@@ -31,6 +31,7 @@ struct Vertex { Point point; uint32_t color; };
 struct Entrant { std::string id; std::string name; };
 
 enum class ColorStyle { ExcelPalette, Gradient, Rainbow };
+enum class TimerPosition { TopLeft, TopCenter, TopRight, BottomLeft, BottomCenter, BottomRight };
 
 struct TextLayer {
   obs_source_t *source = nullptr;
@@ -54,6 +55,7 @@ struct Settings {
   int duration_seconds = 300;
   int countdown_reveal_seconds = 300;
   int dramatic_countdown_seconds = 10;
+  TimerPosition timer_position = TimerPosition::TopRight;
   int spin_duration_ms = 8000;
   int rotations = 7;
   uint32_t color_a = 0xffffc33dU;
@@ -211,6 +213,17 @@ ColorStyle parse_color_style(const char *value)
   return ColorStyle::ExcelPalette;
 }
 
+TimerPosition parse_timer_position(const char *value)
+{
+  const std::string position = value ? value : "top_right";
+  if (position == "top_left") return TimerPosition::TopLeft;
+  if (position == "top_center") return TimerPosition::TopCenter;
+  if (position == "bottom_left") return TimerPosition::BottomLeft;
+  if (position == "bottom_center") return TimerPosition::BottomCenter;
+  if (position == "bottom_right") return TimerPosition::BottomRight;
+  return TimerPosition::TopRight;
+}
+
 uint32_t segment_color(const Settings &settings, int index, int count)
 {
   const float position = count <= 1 ? 0.0f :
@@ -282,12 +295,33 @@ void rounded_rectangle(std::vector<Vertex> &vertices, float x0, float y0,
 {
   radius = std::clamp(radius, 0.0f,
                       std::min((x1 - x0) * 0.5f, (y1 - y0) * 0.5f));
-  rectangle(vertices, x0 + radius, y0, x1 - radius, y1, color);
-  rectangle(vertices, x0, y0 + radius, x1, y1 - radius, color);
-  circle(vertices, {x0 + radius, y0 + radius}, radius, color, 32);
-  circle(vertices, {x1 - radius, y0 + radius}, radius, color, 32);
-  circle(vertices, {x0 + radius, y1 - radius}, radius, color, 32);
-  circle(vertices, {x1 - radius, y1 - radius}, radius, color, 32);
+  if (radius <= 0.0f) {
+    rectangle(vertices, x0, y0, x1, y1, color);
+    return;
+  }
+
+  // A single convex fan avoids the dark discs created when translucent
+  // rectangles and full corner circles overlap.
+  std::vector<Point> perimeter;
+  perimeter.reserve(36);
+  constexpr int corner_steps = 8;
+  const Point centers[] = {{x1 - radius, y0 + radius},
+                           {x1 - radius, y1 - radius},
+                           {x0 + radius, y1 - radius},
+                           {x0 + radius, y0 + radius}};
+  const float starts[] = {-kPi * 0.5f, 0.0f, kPi * 0.5f, kPi};
+  for (int corner = 0; corner < 4; ++corner) {
+    for (int step = 0; step <= corner_steps; ++step) {
+      const float angle = starts[corner] + kPi * 0.5f *
+          static_cast<float>(step) / static_cast<float>(corner_steps);
+      perimeter.push_back({centers[corner].x + std::cos(angle) * radius,
+                           centers[corner].y + std::sin(angle) * radius});
+    }
+  }
+  const Point center{(x0 + x1) * 0.5f, (y0 + y1) * 0.5f};
+  for (std::size_t i = 0; i < perimeter.size(); ++i)
+    triangle(vertices, center, perimeter[i],
+             perimeter[(i + 1) % perimeter.size()], color);
 }
 
 void thick_line(std::vector<Vertex> &vertices, Point start, Point end,
@@ -363,7 +397,7 @@ void update_text(TextLayer &layer, const std::string &text,
   obs_data_set_int(settings, "color", color & 0x00ffffffU);
   obs_data_set_int(settings, "opacity", (color >> 24U) * 100 / 255);
   obs_data_set_bool(settings, "outline", true);
-  obs_data_set_int(settings, "outline_size", std::max(1, size / 18));
+  obs_data_set_int(settings, "outline_size", std::clamp(size / 24, 1, 4));
   obs_data_set_int(settings, "outline_color", 0x000000U);
   obs_data_set_int(settings, "outline_opacity", 75);
   obs_source_update(layer.source, settings);
@@ -408,6 +442,26 @@ void render_rotated_text(const TextLayer &layer, float x, float y,
   gs_matrix_scale3f(scale, scale, 1.0f);
   gs_matrix_translate3f(-static_cast<float>(width) * 0.5f,
                         -static_cast<float>(height) * 0.5f, 0.0f);
+  obs_source_video_render(layer.source);
+  gs_matrix_pop();
+}
+
+void render_text_centered(const TextLayer &layer, float x, float y,
+                          float max_width)
+{
+  if (!layer.source || layer.text.empty())
+    return;
+  const uint32_t width = obs_source_get_width(layer.source);
+  const uint32_t height = obs_source_get_height(layer.source);
+  if (!width || !height)
+    return;
+  const float scale = max_width > 0.0f && width > max_width
+                          ? max_width / static_cast<float>(width)
+                          : 1.0f;
+  gs_matrix_push();
+  gs_matrix_translate3f(x - width * scale * 0.5f,
+                        y - height * scale * 0.5f, 0.0f);
+  gs_matrix_scale3f(scale, scale, 1.0f);
   obs_source_video_render(layer.source);
   gs_matrix_pop();
 }
@@ -564,6 +618,8 @@ void source_update(void *data, obs_data_t *settings)
       obs_data_get_int(settings, "countdown_reveal_seconds"));
   next.dramatic_countdown_seconds = static_cast<int>(
       obs_data_get_int(settings, "dramatic_countdown_seconds"));
+  next.timer_position = parse_timer_position(
+      obs_data_get_string(settings, "timer_position"));
   next.spin_duration_ms = static_cast<int>(obs_data_get_int(settings, "spin_duration_ms"));
   next.rotations = static_cast<int>(obs_data_get_int(settings, "rotations"));
   next.color_a = static_cast<uint32_t>(obs_data_get_int(settings, "color_a"));
@@ -610,6 +666,7 @@ void source_defaults(obs_data_t *settings)
   obs_data_set_default_int(settings, "duration_seconds", 300);
   obs_data_set_default_int(settings, "countdown_reveal_seconds", 300);
   obs_data_set_default_int(settings, "dramatic_countdown_seconds", 10);
+  obs_data_set_default_string(settings, "timer_position", "top_right");
   obs_data_set_default_int(settings, "spin_duration_ms", 8000);
   obs_data_set_default_int(settings, "rotations", 7);
   obs_data_set_default_int(settings, "color_a", rgba(61, 195, 255));
@@ -733,6 +790,15 @@ obs_properties_t *source_properties(void *data)
   obs_properties_add_int(giveaway, "duration_seconds", obs_module_text("Giveaway.Duration"), 0, 86400, 5);
   obs_properties_add_int(giveaway, "countdown_reveal_seconds", obs_module_text("Giveaway.CountdownReveal"), 0, 3600, 5);
   obs_properties_add_int(giveaway, "dramatic_countdown_seconds", obs_module_text("Giveaway.DramaticCountdown"), 0, 60, 1);
+  obs_property_t *timer_position = obs_properties_add_list(
+      giveaway, "timer_position", obs_module_text("Giveaway.TimerPosition"),
+      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+  obs_property_list_add_string(timer_position, obs_module_text("TimerPosition.TopLeft"), "top_left");
+  obs_property_list_add_string(timer_position, obs_module_text("TimerPosition.TopCenter"), "top_center");
+  obs_property_list_add_string(timer_position, obs_module_text("TimerPosition.TopRight"), "top_right");
+  obs_property_list_add_string(timer_position, obs_module_text("TimerPosition.BottomLeft"), "bottom_left");
+  obs_property_list_add_string(timer_position, obs_module_text("TimerPosition.BottomCenter"), "bottom_center");
+  obs_property_list_add_string(timer_position, obs_module_text("TimerPosition.BottomRight"), "bottom_right");
   obs_properties_add_int_slider(giveaway, "spin_duration_ms", obs_module_text("Giveaway.SpinDuration"), 2000, 30000, 250);
   obs_properties_add_int_slider(giveaway, "rotations", obs_module_text("Giveaway.Rotations"), 1, 20, 1);
   obs_properties_add_button(giveaway, "start", obs_module_text("Giveaway.Start"), start_button);
@@ -870,21 +936,21 @@ void source_tick(void *data, float seconds)
       remaining <= source->settings.dramatic_countdown_seconds;
   update_text(source->countdown_label_text,
               phase == "open" && remaining > 0 ? "GIVEAWAY DRAW IN" : "",
-              source->settings.font_face, dramatic_countdown ? 38 : 30,
+              source->settings.font_face, dramatic_countdown ? 34 : 17,
               source->settings.text_color);
   update_text(source->countdown_time_text,
               phase == "open" && remaining > 0
                   ? (dramatic_countdown ? std::to_string(remaining)
                                         : countdown_clock(remaining))
                   : "",
-              source->settings.font_face, dramatic_countdown ? 260 : 112,
+              source->settings.font_face, dramatic_countdown ? 210 : 48,
               source->settings.accent);
   std::ostringstream countdown_entries;
   countdown_entries << entry_count
                     << (entry_count == 1 ? " ENTRANT" : " ENTRANTS");
   update_text(source->countdown_entries_text,
               phase == "open" && remaining > 0 ? countdown_entries.str() : "",
-              source->settings.font_face, dramatic_countdown ? 34 : 30,
+              source->settings.font_face, dramatic_countdown ? 26 : 15,
               source->settings.text_color);
   update_text(source->winner_kicker_text,
               winner.empty() ? "" : "FORTUNA HAS CHOSEN",
@@ -974,10 +1040,15 @@ void source_render(void *data, gs_effect_t *)
 
   if (countdown_visible) {
     const bool dramatic = display_mode == DisplayMode::DramaticCountdown;
+    float text_center_x = width * 0.5f;
+    float label_y = 0.0f;
+    float time_center_y = 0.0f;
+    float entries_y = 0.0f;
+    float text_width = width * 0.72f;
     if (dramatic) {
       rectangle(vertices, 0.0f, 0.0f, width, height, rgba(7, 8, 18, 198));
-      const Point countdown_center{width * 0.5f, height * 0.51f};
-      const float ring_radius = std::min(width, height) * 0.31f;
+      const Point countdown_center{width * 0.5f, height * 0.50f};
+      const float ring_radius = std::min(width, height) * 0.265f;
       if (source->settings.glow) {
         for (int layer = 4; layer >= 1; --layer) {
           wheel_segment(vertices, countdown_center,
@@ -993,22 +1064,46 @@ void source_render(void *data, gs_effect_t *)
                     ring_radius + 4.0f, 0.0f, 2.0f * kPi,
                     shade_color(source->settings.accent, 0.50f),
                     source->settings.accent);
+      label_y = std::max(18.0f, countdown_center.y - ring_radius - 72.0f);
+      time_center_y = countdown_center.y;
+      entries_y = countdown_center.y + ring_radius - 46.0f;
+      text_width = ring_radius * 1.55f;
     } else {
-      const float panel_x0 = width * 0.23f;
-      const float panel_x1 = width * 0.77f;
-      const float panel_y0 = height * 0.18f;
-      const float panel_y1 = height * 0.79f;
-      rounded_rectangle(vertices, panel_x0 + 10.0f, panel_y0 + 12.0f,
-                        panel_x1 + 10.0f, panel_y1 + 12.0f, 34.0f,
+      const float margin = std::clamp(std::min(width, height) * 0.03f,
+                                      14.0f, 34.0f);
+      const float panel_width = std::min(width - margin * 2.0f,
+          std::clamp(width * 0.245f, 250.0f, 390.0f));
+      const float panel_height = std::min(height - margin * 2.0f,
+          std::clamp(height * 0.16f, 104.0f, 142.0f));
+      float panel_x0 = margin;
+      float panel_y0 = margin;
+      const bool centered = source->settings.timer_position == TimerPosition::TopCenter ||
+          source->settings.timer_position == TimerPosition::BottomCenter;
+      const bool right = source->settings.timer_position == TimerPosition::TopRight ||
+          source->settings.timer_position == TimerPosition::BottomRight;
+      const bool bottom = source->settings.timer_position == TimerPosition::BottomLeft ||
+          source->settings.timer_position == TimerPosition::BottomCenter ||
+          source->settings.timer_position == TimerPosition::BottomRight;
+      if (centered) panel_x0 = (width - panel_width) * 0.5f;
+      else if (right) panel_x0 = width - margin - panel_width;
+      if (bottom) panel_y0 = height - margin - panel_height;
+      const float panel_x1 = panel_x0 + panel_width;
+      const float panel_y1 = panel_y0 + panel_height;
+      const float radius = std::min(20.0f, panel_height * 0.17f);
+      rounded_rectangle(vertices, panel_x0 + 6.0f, panel_y0 + 7.0f,
+                        panel_x1 + 6.0f, panel_y1 + 7.0f, radius,
                         rgba(0, 0, 0, 94));
       rounded_rectangle(vertices, panel_x0, panel_y0, panel_x1, panel_y1,
-                        34.0f, with_alpha(source->settings.color_b, 0.82f));
-      rounded_rectangle(vertices, panel_x0 + 3.0f, panel_y0 + 3.0f,
-                        panel_x1 - 3.0f, panel_y1 - 3.0f, 31.0f,
+                        radius, with_alpha(source->settings.color_b, 0.82f));
+      rounded_rectangle(vertices, panel_x0 + 2.0f, panel_y0 + 2.0f,
+                        panel_x1 - 2.0f, panel_y1 - 2.0f,
+                        std::max(1.0f, radius - 2.0f),
                         rgba(17, 18, 31, 238));
-      rounded_rectangle(vertices, width * 0.495f, panel_y0 + 26.0f,
-                        width * 0.505f, panel_y0 + 78.0f, 6.0f,
-                        source->settings.accent);
+      text_center_x = (panel_x0 + panel_x1) * 0.5f;
+      label_y = panel_y0 + 8.0f;
+      time_center_y = panel_y0 + panel_height * 0.53f;
+      entries_y = panel_y1 - 27.0f;
+      text_width = panel_width - 24.0f;
     }
 
     if (!vertices.empty()) {
@@ -1022,12 +1117,12 @@ void source_render(void *data, gs_effect_t *)
         gs_render_stop(GS_TRIS);
       }
     }
-    render_text(source->countdown_label_text, width * 0.5f,
-                height * (dramatic ? 0.12f : 0.28f), width * 0.72f, true);
-    render_text(source->countdown_time_text, width * 0.5f,
-                height * (dramatic ? 0.29f : 0.39f), width * 0.72f, true);
-    render_text(source->countdown_entries_text, width * 0.5f,
-                height * (dramatic ? 0.77f : 0.66f), width * 0.72f, true);
+    render_text(source->countdown_label_text, text_center_x, label_y,
+                text_width, true);
+    render_text_centered(source->countdown_time_text, text_center_x,
+                         time_center_y, text_width);
+    render_text(source->countdown_entries_text, text_center_x, entries_y,
+                text_width, true);
     return;
   }
 
@@ -1138,6 +1233,7 @@ void source_render(void *data, gs_effect_t *)
                ? mix_color(source->settings.accent, rgba(255, 255, 255, 255), 0.12f)
                : source->settings.accent);
 
+  render_confetti(vertices, *source);
   if (winner_visible && side_panel) {
     const float panel_x0 = width * 0.685f;
     const float panel_x1 = width * 0.965f;
@@ -1151,17 +1247,7 @@ void source_render(void *data, gs_effect_t *)
     rounded_rectangle(vertices, panel_x0 + 3.0f, panel_y0 + 3.0f,
                       panel_x1 - 3.0f, panel_y1 - 3.0f, 21.0f,
                       rgba(17, 18, 31, 238));
-    rounded_rectangle(vertices, panel_x0 + 15.0f, panel_y0 + 19.0f,
-                      panel_x0 + 21.0f, panel_y1 - 19.0f, 3.0f,
-                      source->settings.accent);
-    circle(vertices, {(panel_x0 + panel_x1) * 0.5f, panel_y0 + 49.0f},
-           18.0f, shade_color(source->settings.accent, 0.46f), 64);
-    circle(vertices, {(panel_x0 + panel_x1) * 0.5f, panel_y0 + 45.0f},
-           15.0f, source->settings.accent, 64);
-    circle(vertices, {(panel_x0 + panel_x1) * 0.5f, panel_y0 + 45.0f},
-           6.0f, rgba(17, 18, 31, 255), 48);
   }
-  render_confetti(vertices, *source);
 
   if (!vertices.empty()) {
     gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_SOLID);
