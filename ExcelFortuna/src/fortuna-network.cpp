@@ -132,7 +132,7 @@ private:
     if (path.empty())
       path = L"/api/fortuna/plugin/ws";
 
-    session_ = WinHttpOpen(L"ExcelFortuna/0.4.0",
+    session_ = WinHttpOpen(L"ExcelFortuna/0.7.0",
                            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session_) {

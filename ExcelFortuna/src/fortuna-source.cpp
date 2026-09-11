@@ -107,6 +107,7 @@ struct FortunaSource {
   float winner_elapsed = 0.0f;
   std::mt19937 random{std::random_device{}()};
   TextLayer title_text;
+  TextLayer eyebrow_text;
   TextLayer counter_text;
   TextLayer status_text;
   TextLayer countdown_label_text;
@@ -115,6 +116,7 @@ struct FortunaSource {
   TextLayer winner_kicker_text;
   TextLayer winner_text;
   TextLayer winner_message_text;
+  std::vector<TextLayer> reel_texts;
   std::vector<TextLayer> slice_texts;
   std::int64_t active_giveaway_id = 0;
   std::string active_winner_id;
@@ -244,6 +246,18 @@ uint32_t segment_color(const Settings &settings, int index, int count)
   case 4: return settings.accent;
   default: return mix_color(settings.accent, settings.color_a, 0.45f);
   }
+}
+
+int reel_selection_index(float angle, int entrant_count)
+{
+  if (entrant_count <= 0)
+    return 0;
+  const float step = 2.0f * kPi / static_cast<float>(entrant_count);
+  float position = std::fmod(-kPi * 0.5f - angle, 2.0f * kPi);
+  if (position < 0.0f)
+    position += 2.0f * kPi;
+  return std::clamp(static_cast<int>(std::floor(position / step)),
+                    0, entrant_count - 1);
 }
 
 void triangle(std::vector<Vertex> &vertices, Point a, Point b, Point c,
@@ -397,9 +411,9 @@ void update_text(TextLayer &layer, const std::string &text,
   obs_data_set_int(settings, "color", color & 0x00ffffffU);
   obs_data_set_int(settings, "opacity", (color >> 24U) * 100 / 255);
   obs_data_set_bool(settings, "outline", true);
-  obs_data_set_int(settings, "outline_size", std::clamp(size / 24, 1, 4));
+  obs_data_set_int(settings, "outline_size", std::clamp(size / 32, 1, 2));
   obs_data_set_int(settings, "outline_color", 0x000000U);
-  obs_data_set_int(settings, "outline_opacity", 75);
+  obs_data_set_int(settings, "outline_opacity", 58);
   obs_source_update(layer.source, settings);
   obs_data_release(font);
   obs_data_release(settings);
@@ -569,6 +583,7 @@ void *source_create(obs_data_t *settings, obs_source_t *context)
         handle_status(source, connected, message);
       });
   create_text_layer(source->title_text, "ExcelFortuna Title");
+  create_text_layer(source->eyebrow_text, "ExcelFortuna Eyebrow");
   create_text_layer(source->counter_text, "ExcelFortuna Counter");
   create_text_layer(source->status_text, "ExcelFortuna Status");
   create_text_layer(source->countdown_label_text, "ExcelFortuna Countdown Label");
@@ -577,6 +592,12 @@ void *source_create(obs_data_t *settings, obs_source_t *context)
   create_text_layer(source->winner_kicker_text, "ExcelFortuna Winner Kicker");
   create_text_layer(source->winner_text, "ExcelFortuna Winner");
   create_text_layer(source->winner_message_text, "ExcelFortuna Winner Message");
+  for (int i = 0; i < 5; ++i) {
+    TextLayer layer;
+    const std::string name = "ExcelFortuna Reel Row " + std::to_string(i);
+    create_text_layer(layer, name.c_str());
+    source->reel_texts.push_back(std::move(layer));
+  }
   source_update(source, settings);
   return source;
 }
@@ -586,6 +607,7 @@ void source_destroy(void *data)
   auto *source = static_cast<FortunaSource *>(data);
   source->network.reset();
   destroy_text_layer(source->title_text);
+  destroy_text_layer(source->eyebrow_text);
   destroy_text_layer(source->counter_text);
   destroy_text_layer(source->status_text);
   destroy_text_layer(source->countdown_label_text);
@@ -594,7 +616,7 @@ void source_destroy(void *data)
   destroy_text_layer(source->winner_kicker_text);
   destroy_text_layer(source->winner_text);
   destroy_text_layer(source->winner_message_text);
-  for (auto &layer : source->slice_texts)
+  for (auto &layer : source->reel_texts)
     destroy_text_layer(layer);
   delete source;
 }
@@ -674,14 +696,14 @@ void source_defaults(obs_data_t *settings)
   obs_data_set_default_int(settings, "accent", rgba(255, 235, 92));
   obs_data_set_default_int(settings, "text_color", rgba(255, 255, 255));
   obs_data_set_default_int(settings, "background", rgba(0, 0, 0, 0));
-  obs_data_set_default_string(settings, "font_face", "Segoe UI");
+  obs_data_set_default_string(settings, "font_face", "Bahnschrift SemiBold");
   obs_data_set_default_double(settings, "wheel_size", 0.78);
   obs_data_set_default_string(settings, "color_style", "excel");
   obs_data_set_default_bool(settings, "glow", true);
   obs_data_set_default_double(settings, "glow_strength", 0.7);
   obs_data_set_default_bool(settings, "depth", true);
   obs_data_set_default_double(settings, "depth_strength", 0.72);
-  obs_data_set_default_bool(settings, "show_status", true);
+  obs_data_set_default_bool(settings, "show_status", false);
   obs_data_set_default_bool(settings, "confetti", true);
   obs_data_set_default_bool(settings, "only_when_running", false);
 }
@@ -921,15 +943,18 @@ void source_tick(void *data, float seconds)
     source->winner_elapsed += std::max(0.0f, seconds);
   }
 
+  update_text(source->eyebrow_text, "EXCELFORTUNA  /  LIVE DRAW",
+              source->settings.font_face, 13,
+              with_alpha(source->settings.accent, 0.92f));
   update_text(source->title_text, title.empty() ? source->settings.title : title,
-              source->settings.font_face, 42, source->settings.text_color);
+              source->settings.font_face, 32, source->settings.text_color);
   std::ostringstream counter;
   counter << entry_count;
   if (target > 0) counter << " / " << target;
   counter << (entry_count == 1 ? " ENTRY" : " ENTRIES");
   if (remaining > 0) counter << "  |  " << remaining << "s";
   update_text(source->counter_text, counter.str(), source->settings.font_face,
-              28, source->settings.accent);
+              21, source->settings.text_color);
   update_text(source->status_text, status, source->settings.font_face, 18,
               phase == "open" ? rgba(67, 255, 173) : source->settings.text_color);
   const bool dramatic_countdown = phase == "open" && remaining > 0 &&
@@ -954,32 +979,38 @@ void source_tick(void *data, float seconds)
               source->settings.text_color);
   update_text(source->winner_kicker_text,
               winner.empty() ? "" : "FORTUNA HAS CHOSEN",
-              source->settings.font_face, 23, source->settings.text_color);
+              source->settings.font_face, 18,
+              with_alpha(source->settings.text_color, 0.82f));
   update_text(source->winner_text, winner, source->settings.font_face,
-              52, source->settings.accent);
+              58, source->settings.accent);
   update_text(source->winner_message_text,
-              winner.empty() ? "" : "CONGRATULATIONS!",
-              source->settings.font_face, 21, source->settings.text_color);
+              winner.empty() ? "" : "WINNER  /  CONGRATULATIONS",
+              source->settings.font_face, 16, source->settings.text_color);
 
-  const std::size_t label_count = std::min<std::size_t>(entrants.size(), 128);
-  while (source->slice_texts.size() < label_count) {
-    TextLayer layer;
-    const std::string name = "ExcelFortuna Slice " +
-                             std::to_string(source->slice_texts.size());
-    create_text_layer(layer, name.c_str());
-    source->slice_texts.push_back(std::move(layer));
+  const int selected = reel_selection_index(
+      source->wheel_angle, static_cast<int>(entrants.size()));
+  for (int row = 0; row < 5; ++row) {
+    const int offset = row - 2;
+    std::string name;
+    if (entrants.empty()) {
+      if (offset == 0)
+        name = "WAITING FOR ENTRIES";
+    } else if (entrants.size() == 1 && offset != 0) {
+      name.clear();
+    } else {
+      const int count = static_cast<int>(entrants.size());
+      const int index = (selected + offset % count + count) % count;
+      name = entrants[static_cast<std::size_t>(index)].name;
+    }
+    const bool focus = offset == 0;
+    const int size = focus ? 48 : (std::abs(offset) == 1 ? 29 : 21);
+    const float opacity = focus ? 1.0f : (std::abs(offset) == 1 ? 0.58f : 0.25f);
+    const uint32_t color = focus
+        ? source->settings.text_color
+        : with_alpha(source->settings.text_color, opacity);
+    update_text(source->reel_texts[static_cast<std::size_t>(row)], name,
+                source->settings.font_face, size, color);
   }
-  while (source->slice_texts.size() > label_count) {
-    destroy_text_layer(source->slice_texts.back());
-    source->slice_texts.pop_back();
-  }
-  const int slice_font_size = entrants.size() <= 12 ? 23 :
-                              entrants.size() <= 24 ? 17 :
-                              entrants.size() <= 48 ? 13 : 10;
-  for (std::size_t i = 0; i < label_count; ++i)
-    update_text(source->slice_texts[i], entrants[i].name,
-                source->settings.font_face, slice_font_size,
-                source->settings.text_color);
 }
 
 void render_confetti(std::vector<Vertex> &vertices, const FortunaSource &source)
@@ -989,34 +1020,41 @@ void render_confetti(std::vector<Vertex> &vertices, const FortunaSource &source)
     return;
   const float width = static_cast<float>(source.settings.width);
   const float height = static_cast<float>(source.settings.height);
-  for (int i = 0; i < 70; ++i) {
+  for (int i = 0; i < 76; ++i) {
     const uint32_t seed = static_cast<uint32_t>(i * 2654435761U);
-    const float x = static_cast<float>(seed % 10000U) / 10000.0f * width;
+    const float base_x = static_cast<float>(seed % 10000U) / 10000.0f * width;
     const float speed = 70.0f + static_cast<float>((seed >> 8U) % 190U);
     const float y = std::fmod(static_cast<float>((seed >> 16U) % 1000U) -
                                   300.0f + source.winner_elapsed * speed,
                               height + 80.0f) - 30.0f;
-    const float size = 4.0f + static_cast<float>((seed >> 5U) % 8U);
-    const uint32_t color = mix_color(source.settings.color_a,
-                                     source.settings.color_b,
-                                     static_cast<float>(i % 10) / 9.0f);
-    rectangle(vertices, x, y, x + size, y + size * 2.0f, color);
+    const float sway = std::sin(source.winner_elapsed * 2.4f + i * 0.73f) *
+                       (8.0f + static_cast<float>((seed >> 12U) % 18U));
+    const float x = base_x + sway;
+    const float length = 7.0f + static_cast<float>((seed >> 5U) % 13U);
+    const float angle = source.winner_elapsed *
+                        (1.2f + static_cast<float>((seed >> 20U) % 9U) * 0.12f) +
+                        static_cast<float>(i) * 0.81f;
+    const uint32_t color = i % 3 == 0 ? source.settings.accent :
+        (i % 3 == 1 ? source.settings.color_a : source.settings.color_b);
+    thick_line(vertices, {x - std::cos(angle) * length * 0.5f,
+                           y - std::sin(angle) * length * 0.5f},
+                          {x + std::cos(angle) * length * 0.5f,
+                           y + std::sin(angle) * length * 0.5f},
+                          3.0f + static_cast<float>(seed % 3U), color);
   }
 }
 
-void source_render(void *data, gs_effect_t *)
+void source_render_legacy(void *data, gs_effect_t *)
 {
   auto *source = static_cast<FortunaSource *>(data);
   std::vector<Entrant> entrants;
   std::string phase;
   int remaining = 0;
-  int entry_count = 0;
   {
     std::lock_guard<std::mutex> lock(source->state.mutex);
     entrants = source->state.entrants;
     phase = source->state.phase;
     remaining = source->state.remaining_seconds;
-    entry_count = source->state.entry_count;
   }
 
   const bool winner_visible =
@@ -1046,28 +1084,51 @@ void source_render(void *data, gs_effect_t *)
     float entries_y = 0.0f;
     float text_width = width * 0.72f;
     if (dramatic) {
-      rectangle(vertices, 0.0f, 0.0f, width, height, rgba(7, 8, 18, 198));
-      const Point countdown_center{width * 0.5f, height * 0.50f};
-      const float ring_radius = std::min(width, height) * 0.265f;
+      rectangle(vertices, 0.0f, 0.0f, width, height, rgba(4, 7, 15, 210));
+      const float panel_width = std::min(width * 0.58f, 760.0f);
+      const float panel_height = std::min(height * 0.52f, 380.0f);
+      const float panel_x0 = (width - panel_width) * 0.5f;
+      const float panel_x1 = panel_x0 + panel_width;
+      const float panel_y0 = (height - panel_height) * 0.5f;
+      const float panel_y1 = panel_y0 + panel_height;
+      const float radius = std::min(28.0f, panel_height * 0.08f);
       if (source->settings.glow) {
-        for (int layer = 4; layer >= 1; --layer) {
-          wheel_segment(vertices, countdown_center,
-                        ring_radius + layer * 8.0f,
-                        ring_radius + layer * 12.0f,
-                        0.0f, 2.0f * kPi,
-                        with_alpha(source->settings.color_b, 0.0f),
-                        with_alpha(source->settings.color_b,
-                                   source->settings.glow_strength * 0.10f));
-        }
+        for (int layer = 4; layer >= 1; --layer)
+          rounded_rectangle(
+              vertices, panel_x0 - layer * 6.0f, panel_y0 - layer * 6.0f,
+              panel_x1 + layer * 6.0f, panel_y1 + layer * 6.0f,
+              radius + layer * 4.0f,
+              with_alpha(source->settings.color_a,
+                         source->settings.glow_strength *
+                             static_cast<float>(5 - layer) * 0.018f));
       }
-      wheel_segment(vertices, countdown_center, ring_radius - 4.0f,
-                    ring_radius + 4.0f, 0.0f, 2.0f * kPi,
-                    shade_color(source->settings.accent, 0.50f),
-                    source->settings.accent);
-      label_y = std::max(18.0f, countdown_center.y - ring_radius - 72.0f);
-      time_center_y = countdown_center.y;
-      entries_y = countdown_center.y + ring_radius - 46.0f;
-      text_width = ring_radius * 1.55f;
+      rounded_rectangle(vertices, panel_x0 + 10.0f, panel_y0 + 14.0f,
+                        panel_x1 + 10.0f, panel_y1 + 14.0f, radius,
+                        rgba(0, 0, 0, 104));
+      rounded_rectangle(vertices, panel_x0, panel_y0, panel_x1, panel_y1,
+                        radius, with_alpha(source->settings.color_a, 0.76f));
+      rounded_rectangle(vertices, panel_x0 + 2.0f, panel_y0 + 2.0f,
+                        panel_x1 - 2.0f, panel_y1 - 2.0f,
+                        std::max(1.0f, radius - 2.0f), rgba(7, 11, 23, 246));
+      const float rail_y = panel_y1 - 12.0f;
+      const float rail_x0 = panel_x0 + 26.0f;
+      const float rail_x1 = panel_x1 - 26.0f;
+      rounded_rectangle(vertices, rail_x0, rail_y - 2.0f,
+                        rail_x1, rail_y + 2.0f, 2.0f,
+                        with_alpha(source->settings.text_color, 0.10f));
+      const float fraction = source->settings.dramatic_countdown_seconds > 0
+          ? std::clamp(static_cast<float>(remaining) /
+                           source->settings.dramatic_countdown_seconds,
+                       0.0f, 1.0f)
+          : 0.0f;
+      rounded_rectangle(vertices, rail_x0, rail_y - 2.0f,
+                        rail_x0 + (rail_x1 - rail_x0) * fraction,
+                        rail_y + 2.0f, 2.0f, source->settings.accent);
+      text_center_x = width * 0.5f;
+      label_y = panel_y0 + 28.0f;
+      time_center_y = panel_y0 + panel_height * 0.52f;
+      entries_y = panel_y1 - 60.0f;
+      text_width = panel_width - 76.0f;
     } else {
       const float margin = std::clamp(std::min(width, height) * 0.03f,
                                       14.0f, 34.0f);
@@ -1195,6 +1256,20 @@ void source_render(void *data, gs_effect_t *)
                 center.y + std::sin(angle) * radius},
                1.35f, with_alpha(outline, 0.92f));
   }
+  // Fine outer markers give the wheel a machined broadcast-graphics finish
+  // and make motion easier to read without adding heavy separator gaps.
+  const int marker_count = std::min(segments, 64);
+  for (int i = 0; i < marker_count; ++i) {
+    const float angle = source->wheel_angle +
+        (static_cast<float>(i) + 0.5f) * 2.0f * kPi /
+            static_cast<float>(marker_count);
+    thick_line(vertices,
+               {center.x + std::cos(angle) * (radius + 8.0f),
+                center.y + std::sin(angle) * (radius + 8.0f)},
+               {center.x + std::cos(angle) * (radius + 14.0f),
+                center.y + std::sin(angle) * (radius + 14.0f)},
+               2.0f, with_alpha(source->settings.accent, 0.74f));
+  }
   if (source->settings.depth) {
     // A restrained upper rim highlight reads as polished material while the
     // radial slice gradients give every wedge a curved, beveled surface.
@@ -1234,19 +1309,60 @@ void source_render(void *data, gs_effect_t *)
                : source->settings.accent);
 
   render_confetti(vertices, *source);
+
+  // A restrained glass header and entrant pill make the source feel like one
+  // composed overlay instead of loose text floating around the wheel.
+  const float header_width = std::min(wheel_region * 0.72f, 560.0f);
+  const float header_x0 = wheel_region * 0.5f - header_width * 0.5f;
+  const float header_x1 = header_x0 + header_width;
+  rounded_rectangle(vertices, header_x0 + 5.0f, 15.0f,
+                    header_x1 + 5.0f, 75.0f, 17.0f, rgba(0, 0, 0, 76));
+  rounded_rectangle(vertices, header_x0, 10.0f, header_x1, 70.0f,
+                    17.0f, with_alpha(source->settings.color_b, 0.62f));
+  rounded_rectangle(vertices, header_x0 + 2.0f, 12.0f,
+                    header_x1 - 2.0f, 68.0f, 15.0f,
+                    rgba(12, 14, 27, 226));
+  rectangle(vertices, header_x0 + 22.0f, 66.0f,
+            header_x1 - 22.0f, 68.0f,
+            with_alpha(source->settings.accent, 0.78f));
+
+  const float counter_width = std::min(wheel_region * 0.48f, 390.0f);
+  const float counter_x0 = wheel_region * 0.5f - counter_width * 0.5f;
+  const float counter_x1 = counter_x0 + counter_width;
+  const float counter_y0 = height - 57.0f;
+  const float counter_y1 = height - 17.0f;
+  rounded_rectangle(vertices, counter_x0 + 4.0f, counter_y0 + 4.0f,
+                    counter_x1 + 4.0f, counter_y1 + 4.0f, 20.0f,
+                    rgba(0, 0, 0, 72));
+  rounded_rectangle(vertices, counter_x0, counter_y0,
+                    counter_x1, counter_y1, 20.0f,
+                    with_alpha(source->settings.accent, 0.86f));
+  rounded_rectangle(vertices, counter_x0 + 2.0f, counter_y0 + 2.0f,
+                    counter_x1 - 2.0f, counter_y1 - 2.0f, 18.0f,
+                    rgba(12, 14, 27, 236));
+
   if (winner_visible && side_panel) {
     const float panel_x0 = width * 0.685f;
     const float panel_x1 = width * 0.965f;
     const float panel_y0 = center.y - radius * 0.47f;
     const float panel_y1 = center.y + radius * 0.47f;
-    rounded_rectangle(vertices, panel_x0 + 9.0f, panel_y0 + 11.0f,
-                      panel_x1 + 9.0f, panel_y1 + 11.0f, 24.0f,
-                      rgba(0, 0, 0, 92));
+    if (source->settings.glow) {
+      rounded_rectangle(vertices, panel_x0 - 8.0f, panel_y0 - 8.0f,
+                        panel_x1 + 8.0f, panel_y1 + 8.0f, 31.0f,
+                        with_alpha(source->settings.color_b,
+                                   source->settings.glow_strength * 0.13f));
+    }
+    rounded_rectangle(vertices, panel_x0 + 8.0f, panel_y0 + 10.0f,
+                      panel_x1 + 8.0f, panel_y1 + 10.0f, 26.0f,
+                      rgba(0, 0, 0, 94));
     rounded_rectangle(vertices, panel_x0, panel_y0, panel_x1, panel_y1,
-                      24.0f, with_alpha(source->settings.accent, 0.92f));
-    rounded_rectangle(vertices, panel_x0 + 3.0f, panel_y0 + 3.0f,
-                      panel_x1 - 3.0f, panel_y1 - 3.0f, 21.0f,
-                      rgba(17, 18, 31, 238));
+                      26.0f, with_alpha(source->settings.color_b, 0.72f));
+    rounded_rectangle(vertices, panel_x0 + 2.0f, panel_y0 + 2.0f,
+                      panel_x1 - 2.0f, panel_y1 - 2.0f, 24.0f,
+                      rgba(12, 14, 27, 242));
+    rounded_rectangle(vertices, panel_x0 + 14.0f, panel_y0 + 18.0f,
+                      panel_x0 + 20.0f, panel_y1 - 18.0f, 3.0f,
+                      source->settings.accent);
   }
 
   if (!vertices.empty()) {
@@ -1261,10 +1377,12 @@ void source_render(void *data, gs_effect_t *)
     }
   }
 
-  render_text(source->title_text, wheel_region * 0.5f, 20.0f,
-              wheel_region * 0.86f, true);
-  render_text(source->counter_text, wheel_region * 0.5f, height - 64.0f,
-              wheel_region * 0.86f, true);
+  render_text(source->eyebrow_text, wheel_region * 0.5f, 17.0f,
+              header_width - 34.0f, true);
+  render_text(source->title_text, wheel_region * 0.5f, 32.0f,
+              header_width - 34.0f, true);
+  render_text(source->counter_text, wheel_region * 0.5f, height - 51.0f,
+              counter_width - 28.0f, true);
   if (source->settings.show_status)
     render_text(source->status_text, 14.0f, height - 26.0f,
                 width * 0.75f, false);
@@ -1299,6 +1417,180 @@ void source_render(void *data, gs_effect_t *)
       render_text(source->winner_message_text, wheel_region * 0.5f,
                   center.y + 38.0f, wheel_region * 0.62f, true);
     }
+  }
+}
+
+void source_render(void *data, gs_effect_t *)
+{
+  auto *source = static_cast<FortunaSource *>(data);
+  std::vector<Entrant> entrants;
+  std::string phase;
+  int remaining = 0;
+  {
+    std::lock_guard<std::mutex> lock(source->state.mutex);
+    entrants = source->state.entrants;
+    phase = source->state.phase;
+    remaining = source->state.remaining_seconds;
+  }
+
+  const bool winner_visible =
+      ((!source->spin.active() && source->spin.finished()) || phase == "winner") &&
+      source->winner_elapsed <= 10.0f;
+  const DisplayMode display_mode = excel_fortuna::choose_display_mode(
+      source->settings.only_when_running, phase, remaining,
+      source->settings.countdown_reveal_seconds,
+      source->settings.dramatic_countdown_seconds, winner_visible);
+  if (display_mode == DisplayMode::Hidden)
+    return;
+  if (display_mode == DisplayMode::Countdown ||
+      display_mode == DisplayMode::DramaticCountdown) {
+    source_render_legacy(data, nullptr);
+    return;
+  }
+
+  const float width = static_cast<float>(source->settings.width);
+  const float height = static_cast<float>(source->settings.height);
+  const float scale = std::clamp(source->settings.wheel_size / 0.78f,
+                                 0.55f, 1.22f);
+  const float frame_width = std::min(width * 0.72f, 900.0f) * scale;
+  const float frame_height = std::min(height * 0.47f, 370.0f) *
+                             std::clamp(scale, 0.78f, 1.10f);
+  const float center_x = width * 0.5f;
+  const float center_y = height * 0.52f;
+  const float x0 = center_x - frame_width * 0.5f;
+  const float x1 = center_x + frame_width * 0.5f;
+  const float y0 = center_y - frame_height * 0.5f;
+  const float y1 = center_y + frame_height * 0.5f;
+  const float corner = std::clamp(frame_height * 0.065f, 14.0f, 26.0f);
+  const uint32_t cyan = source->settings.color_a;
+  const uint32_t violet = source->settings.color_b;
+  const uint32_t accent = source->settings.accent;
+  std::vector<Vertex> vertices;
+  vertices.reserve(9000);
+
+  if ((source->settings.background >> 24U) != 0)
+    rectangle(vertices, 0.0f, 0.0f, width, height,
+              source->settings.background);
+
+  // Quiet framing marks make the picker read like a broadcast graphic while
+  // keeping the middle open and legible over any scene.
+  rectangle(vertices, center_x - 0.75f, 102.0f, center_x + 0.75f,
+            height - 82.0f, with_alpha(cyan, 0.08f));
+  const float bracket = std::min(72.0f, frame_width * 0.10f);
+  thick_line(vertices, {x0 - 22.0f, y0 + 38.0f},
+             {x0 - 22.0f, y0 + 38.0f + bracket}, 2.0f,
+             with_alpha(cyan, 0.52f));
+  thick_line(vertices, {x0 - 22.0f, y0 + 38.0f},
+             {x0 - 5.0f, y0 + 38.0f}, 2.0f,
+             with_alpha(cyan, 0.52f));
+  thick_line(vertices, {x1 + 22.0f, y1 - 38.0f},
+             {x1 + 22.0f, y1 - 38.0f - bracket}, 2.0f,
+             with_alpha(violet, 0.52f));
+  thick_line(vertices, {x1 + 22.0f, y1 - 38.0f},
+             {x1 + 5.0f, y1 - 38.0f}, 2.0f,
+             with_alpha(violet, 0.52f));
+
+  if (source->settings.glow) {
+    for (int layer = 4; layer >= 1; --layer) {
+      rounded_rectangle(vertices, x0 - layer * 5.0f, y0 - layer * 5.0f,
+                        x1 + layer * 5.0f, y1 + layer * 5.0f,
+                        corner + layer * 4.0f,
+                        with_alpha(cyan, source->settings.glow_strength *
+                                            (5 - layer) * 0.018f));
+    }
+  }
+  rounded_rectangle(vertices, x0 + 9.0f, y0 + 13.0f,
+                    x1 + 9.0f, y1 + 13.0f, corner, rgba(0, 0, 0, 112));
+  rounded_rectangle(vertices, x0, y0, x1, y1, corner,
+                    with_alpha(cyan, 0.74f));
+  rounded_rectangle(vertices, x0 + 2.0f, y0 + 2.0f,
+                    x1 - 2.0f, y1 - 2.0f, std::max(1.0f, corner - 2.0f),
+                    rgba(6, 10, 21, 238));
+
+  // Subtle rails and scan lines provide motion cues without rainbow wedges.
+  for (int column = 1; column < 8; ++column) {
+    const float x = x0 + frame_width * static_cast<float>(column) / 8.0f;
+    rectangle(vertices, x - 0.5f, y0 + 18.0f, x + 0.5f, y1 - 18.0f,
+              with_alpha(source->settings.text_color, 0.035f));
+  }
+  const float row_gap = frame_height * 0.205f;
+  for (int row = -2; row <= 2; ++row) {
+    const float y = center_y + (static_cast<float>(row) + 0.5f) * row_gap;
+    if (row < 2)
+      rectangle(vertices, x0 + 32.0f, y - 0.5f, x1 - 32.0f, y + 0.5f,
+                with_alpha(source->settings.text_color, 0.055f));
+  }
+
+  const float selector_height = row_gap * 0.90f;
+  const float sy0 = center_y - selector_height * 0.5f;
+  const float sy1 = center_y + selector_height * 0.5f;
+  rounded_rectangle(vertices, x0 + 18.0f, sy0, x1 - 18.0f, sy1,
+                    std::min(15.0f, selector_height * 0.22f),
+                    with_alpha(cyan, source->spin.active() ? 0.10f : 0.15f));
+  rectangle(vertices, x0 + 18.0f, sy0 + 10.0f,
+            x0 + 22.0f, sy1 - 10.0f, cyan);
+  rectangle(vertices, x1 - 22.0f, sy0 + 10.0f,
+            x1 - 18.0f, sy1 - 10.0f, cyan);
+  rectangle(vertices, x0 + 48.0f, sy0, x1 - 48.0f, sy0 + 1.5f,
+            with_alpha(cyan, 0.54f));
+  rectangle(vertices, x0 + 48.0f, sy1 - 1.5f, x1 - 48.0f, sy1,
+            with_alpha(cyan, 0.54f));
+
+  if (source->spin.active()) {
+    const float pulse = 0.5f + 0.5f * std::sin(source->wheel_angle * 1.7f);
+    const float rail_x = x0 + 42.0f + pulse * (frame_width - 84.0f);
+    rectangle(vertices, rail_x - 22.0f, sy0 - 3.0f,
+              rail_x + 22.0f, sy0, with_alpha(accent, 0.84f));
+  } else if (winner_visible) {
+    rounded_rectangle(vertices, x0 + 12.0f, sy0 - 6.0f,
+                      x1 - 12.0f, sy1 + 6.0f,
+                      std::min(18.0f, selector_height * 0.25f),
+                      with_alpha(accent, 0.12f));
+  }
+
+  // Minimal entrant counter; it remains readable without another large bar.
+  const float counter_width = std::min(330.0f, frame_width * 0.42f);
+  const float cy0 = height - 58.0f;
+  const float cy1 = height - 20.0f;
+  rounded_rectangle(vertices, center_x - counter_width * 0.5f, cy0,
+                    center_x + counter_width * 0.5f, cy1, 19.0f,
+                    with_alpha(cyan, 0.62f));
+  rounded_rectangle(vertices, center_x - counter_width * 0.5f + 2.0f,
+                    cy0 + 2.0f, center_x + counter_width * 0.5f - 2.0f,
+                    cy1 - 2.0f, 17.0f, rgba(7, 11, 22, 236));
+
+  render_confetti(vertices, *source);
+  if (!vertices.empty()) {
+    gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_SOLID);
+    while (gs_effect_loop(effect, "SolidColored")) {
+      gs_render_start(true);
+      for (const auto &vertex : vertices) {
+        gs_color(vertex.color);
+        gs_vertex2f(vertex.point.x, vertex.point.y);
+      }
+      gs_render_stop(GS_TRIS);
+    }
+  }
+
+  render_text(source->eyebrow_text, center_x, 25.0f,
+              std::min(width * 0.72f, 700.0f), true);
+  render_text(source->title_text, center_x, 45.0f,
+              std::min(width * 0.78f, 760.0f), true);
+  for (std::size_t row = 0; row < source->reel_texts.size(); ++row) {
+    const float y = center_y + (static_cast<float>(row) - 2.0f) * row_gap;
+    render_text_centered(source->reel_texts[row], center_x, y,
+                         frame_width - 86.0f);
+  }
+  render_text(source->counter_text, center_x, cy0 + 5.0f,
+              counter_width - 24.0f, true);
+  if (source->settings.show_status)
+    render_text(source->status_text, 14.0f, height - 26.0f,
+                width * 0.35f, false);
+  if (winner_visible) {
+    render_text(source->winner_kicker_text, center_x,
+                y1 + 21.0f, frame_width * 0.72f, true);
+    render_text(source->winner_message_text, center_x,
+                y1 + 47.0f, frame_width * 0.72f, true);
   }
 }
 } // namespace

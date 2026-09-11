@@ -3,8 +3,15 @@
 ExcelFortuna is a native Windows OBS source for Twitch giveaways powered by
 ExcelProtocol. Viewers can enter through a Channel Points reward or a
 configurable chat command such as `!enter`. It renders the entrant counter,
-animated wheel, winner reveal, neon glow, names, and confetti directly through
+animated name reel, winner reveal, neon glow, names, and confetti directly through
 OBS rather than a browser source.
+
+Version 0.7 replaces the wheel with a modern broadcast-style name reel. Five
+focused rows sweep through a clean selector and lock onto the server-selected
+winner, with restrained framing, motion cues, and streamer confetti. ExcelProtocol confirms both
+Channel Points and chat-command entries with the current entrant total. It also
+uses a pinned giveaway-start notice when the channel has no existing pin, or
+periodic reminders when the creator/mod team is already using the pinned slot.
 
 ExcelProtocol keeps Twitch credentials and giveaway authority on the server.
 The OBS plugin receives only display events through a revocable, channel-bound
@@ -18,19 +25,22 @@ module on the server; OBS only animates the result.
   in the admin history as excluded entries
 - Manual spin, entry-count auto-spin, or countdown auto-spin
 - Server-authoritative winner selection and synchronized Twitch chat message
-- Entrant names drawn directly on seamless, smoothly rendered wheel slices
-- Optional polished 3D bevel, rim, highlights, and cast shadow
-- Centered concentric hub and a right-side winner announcement card
+- Entry confirmations with the current total in both entry modes
+- Pinned live notice without replacing an existing creator/mod pin, with
+  periodic reminder fallback
+- Entrant names displayed in a clean, animated five-row selector
+- Optional neon glow, depth, framing marks, and winner highlight
+- Centered winner lock with an uncluttered confirmation message
 - Segoe UI, Bahnschrift, Aptos Display, and Trebuchet font choices
-- Excel three-color, two-color gradient, and vibrant rainbow palettes
-- Adjustable wheel colors, accent, background, size, glow, rotation count,
-  spin duration, 3D depth, status text, confetti, and running-only visibility
+- Excel three-color, two-color gradient, and vibrant rainbow color options
+- Adjustable picker colors, accent, background, size, glow, reel cycles,
+  draw duration, depth, status text, confetti, and running-only visibility
 - Offline demo entrant and demo spin buttons for safe scene design
 - Multiple OBS sources can watch the same giveaway
 - Winner announcements wait for OBS to report the actual final animation frame
 - Automatic chat-entry confirmations include the current eligible entrant total
 - Full-screen staged reveal: hidden early, timer-only warning, dramatic final
-  ten seconds, then the wheel appears and spins at zero
+  ten seconds, then the name reel appears and draws at zero
 - Compact six-position final-minutes timer and centered, unclipped dramatic
   countdown typography
 
@@ -41,7 +51,7 @@ module on the server; OBS only animates the result.
    [Releases page](https://github.com/StayExcellent666/Excel-OBS-Plugins/releases).
 3. Extract the zip directly into the OBS installation folder so its
    `obs-plugins` and `data` folders merge with the matching OBS folders.
-4. Reopen OBS and add **ExcelFortuna Giveaway Wheel** from Sources.
+4. Reopen OBS and add **ExcelFortuna Giveaway Picker** from Sources.
 
 ## Connect ExcelProtocol
 
@@ -64,20 +74,20 @@ module on the server; OBS only animates the result.
 3. Click **Start accepting entries**.
 4. Viewers redeem the reward or type the command; unique names and the counter
    update live. Each Twitch account receives one eligible entry.
-5. Click **Close entries and spin now**, or let an auto-spin condition fire.
+5. Click **Close entries and draw now**, or let an automatic finish condition fire.
 6. ExcelProtocol selects the winner, ExcelFortuna lands on them, and the bot
-   names them in Twitch chat after the wheel finishes.
+   names them in Twitch chat after the name reel finishes.
 
 With **Hide until final countdown, spin, and winner** enabled, a long giveaway
 stays completely hidden at first. By default, the final five minutes show only
 the remaining time and eligible entrant count. The last ten seconds switch to
-large full-screen numbers. At zero ExcelProtocol closes entries and the wheel
-appears for the synchronized spin. Both reveal thresholds are configurable,
+large full-screen numbers. At zero ExcelProtocol closes entries and the name reel
+appears for the synchronized draw. Both reveal thresholds are configurable,
 and the compact timer can be anchored to any top or bottom corner/center.
 
 You can run a realistic test even if the channel does not have Channel Points.
 While connected, **Run test spin** asks ExcelProtocol to send mock entrants,
-select a winner server-side, drive the wheel, and post a clearly labeled test
+select a winner server-side, drive the picker, and post a clearly labeled test
 result in the linked Twitch chat. It does not create giveaway history and no
 prize is awarded. When disconnected, the same button is a local visual preview
 using entrants added with **Add demo entrant**, so it cannot post to chat.

@@ -12,12 +12,12 @@ MODULE_EXPORT const char *obs_module_name(void)
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-  return "ExcelFortuna Twitch giveaway wheel for OBS";
+  return "ExcelFortuna live Twitch giveaway picker for OBS";
 }
 
 bool obs_module_load(void)
 {
   register_fortuna_source();
-  blog(LOG_INFO, "[ExcelFortuna] loaded version 0.5.0");
+  blog(LOG_INFO, "[ExcelFortuna] loaded version 0.7.0");
   return true;
 }
